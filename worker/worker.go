@@ -13,6 +13,7 @@ import (
 
 	"github.com/prateekkhurmi/hookforge/internal/config"
 	"github.com/prateekkhurmi/hookforge/internal/database"
+	"github.com/prateekkhurmi/hookforge/internal/metrics"
 	"github.com/prateekkhurmi/hookforge/internal/redis"
 )
 
@@ -49,7 +50,6 @@ func (w *Worker) deliveryLoop(ctx context.Context) {
 		default:
 			eventID, err := w.rdb.DequeueEvent(ctx)
 			if err != nil {
-				log.Printf("dequeue error: %v", err)
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
@@ -75,10 +75,9 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 		return fmt.Errorf("endpoint %s not found", event.EndpointID)
 	}
 
-	payloadBytes := event.Payload
-	signature := signPayload(payloadBytes, w.cfg.SigningSecret)
+	signature := signPayload(event.Payload, w.cfg.SigningSecret)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, bytes.NewReader(payloadBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, bytes.NewReader(event.Payload))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
@@ -91,7 +90,10 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 	resp, err := w.client.Do(req)
 	latency := time.Since(start)
 
+	metrics.DeliveryAttempts.Inc()
+
 	if err != nil {
+		metrics.EventsTotal.WithLabelValues("failed").Inc()
 		if err := w.handleFailure(ctx, event); err != nil {
 			log.Printf("handle failure error: %v", err)
 		}
@@ -100,6 +102,9 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		metrics.EventsTotal.WithLabelValues("delivered").Inc()
+		metrics.DeliveryLatency.Observe(latency.Seconds())
+
 		if err := w.db.UpdateEventStatus(ctx, eventID, "delivered"); err != nil {
 			return fmt.Errorf("update status: %w", err)
 		}
@@ -107,6 +112,7 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 		return nil
 	}
 
+	metrics.EventsTotal.WithLabelValues("failed").Inc()
 	if err := w.handleFailure(ctx, event); err != nil {
 		log.Printf("handle failure error: %v", err)
 	}
@@ -117,6 +123,7 @@ func (w *Worker) handleFailure(ctx context.Context, event *database.Event) error
 	event.Attempts++
 
 	if event.Attempts >= event.MaxRetries {
+		metrics.EventsTotal.WithLabelValues("dead").Inc()
 		if err := w.db.UpdateEventStatus(ctx, event.ID, "dead"); err != nil {
 			return fmt.Errorf("mark dead: %w", err)
 		}
@@ -158,15 +165,18 @@ func (w *Worker) processRetries(ctx context.Context) {
 	}
 
 	now := time.Now()
+	retryCount := 0
 	for _, event := range events {
 		if event.NextRetryAt != nil && event.NextRetryAt.Before(now) {
 			if err := w.rdb.EnqueueEvent(ctx, event.ID); err != nil {
 				log.Printf("retry enqueue error for event %s: %v", event.ID, err)
 				continue
 			}
+			retryCount++
 			log.Printf("re-enqueued event %s for retry", event.ID)
 		}
 	}
+	metrics.RetryCount.Set(float64(len(events)))
 }
 
 func calculateBackoff(attempt int) time.Duration {

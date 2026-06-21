@@ -1,0 +1,26 @@
+<table>
+  <thead>
+    <tr>
+      <th>Event ID</th>
+      <th>Endpoint</th>
+      <th>Status</th>
+      <th>Attempts</th>
+      <th>Age</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{if not .events}}
+    <tr><td colspan="5" style="text-align:center;color:#64748b;padding:2rem;">No events yet</td></tr>
+    {{else}}
+    {{range .events}}
+    <tr>
+      <td class="mono">{{shortID .ID}}</td>
+      <td class="mono">{{shortID .EndpointID}}</td>
+      <td><span class="badge {{.Status}}">{{.Status}}</span></td>
+      <td>{{.Attempts}}/{{.MaxRetries}}</td>
+      <td>{{since .CreatedAt}}</td>
+    </tr>
+    {{end}}
+    {{end}}
+  </tbody>
+</table>

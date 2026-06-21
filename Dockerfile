@@ -8,6 +8,8 @@ RUN CGO_ENABLED=0 go build -o /hookforge ./cmd/server
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates
+WORKDIR /app
 COPY --from=builder /hookforge /usr/local/bin/hookforge
+COPY --from=builder /app/templates ./templates
 EXPOSE 8080
 CMD ["hookforge"]

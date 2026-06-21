@@ -13,6 +13,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/prateekkhurmi/hookforge/internal/config"
 	"github.com/prateekkhurmi/hookforge/internal/database"
+	"github.com/prateekkhurmi/hookforge/internal/metrics"
 	"github.com/prateekkhurmi/hookforge/internal/redis"
 	"github.com/prateekkhurmi/hookforge/internal/router"
 	"github.com/prateekkhurmi/hookforge/worker"
@@ -35,6 +36,7 @@ func main() {
 	}
 	defer rdb.Close()
 
+	initMetrics()
 	w := worker.New(db, rdb, cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -66,9 +68,15 @@ func runMigrations(databaseURL string) {
 	if err != nil {
 		log.Fatalf("migration init: %v", err)
 	}
-
 	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
 		log.Fatalf("migration up: %v", err)
 	}
 	log.Println("migrations applied")
+}
+
+func initMetrics() {
+	metrics.EventsTotal.WithLabelValues("pending")
+	metrics.EventsTotal.WithLabelValues("delivered")
+	metrics.EventsTotal.WithLabelValues("failed")
+	metrics.EventsTotal.WithLabelValues("dead")
 }

@@ -1,0 +1,26 @@
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="value">{{.TotalSent}}</div>
+    <div class="label">Total Events</div>
+  </div>
+  <div class="stat-card delivered">
+    <div class="value">{{.Delivered}}</div>
+    <div class="label">Delivered</div>
+  </div>
+  <div class="stat-card failed">
+    <div class="value">{{.Failed}}</div>
+    <div class="label">Failed</div>
+  </div>
+  <div class="stat-card dead">
+    <div class="value">{{.Dead}}</div>
+    <div class="label">Dead Letter</div>
+  </div>
+  <div class="stat-card pending">
+    <div class="value">{{.Pending}}</div>
+    <div class="label">Pending / Retrying</div>
+  </div>
+  <div class="stat-card rate">
+    <div class="value">{{printf "%.1f" .DeliveryRate}}%</div>
+    <div class="label">Delivery Rate</div>
+  </div>
+</div>
