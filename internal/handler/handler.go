@@ -18,7 +18,8 @@ func NewEndpointHandler(db *database.DB) *EndpointHandler {
 }
 
 type createEndpointReq struct {
-	URL string `json:"url" binding:"required"`
+	URL             string `json:"url" binding:"required"`
+	SlackWebhookURL string `json:"slack_webhook_url"`
 }
 
 func (h *EndpointHandler) Create(c *gin.Context) {
@@ -28,13 +29,52 @@ func (h *EndpointHandler) Create(c *gin.Context) {
 		return
 	}
 
-	endpoint, err := h.db.CreateEndpoint(c.Request.Context(), req.URL)
+	endpoint, secret, err := h.db.CreateEndpoint(c.Request.Context(), req.URL, req.SlackWebhookURL)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusCreated, endpoint)
+	c.JSON(http.StatusCreated, database.EndpointResponse{
+		ID:                 endpoint.ID,
+		URL:                endpoint.URL,
+		Secret:             secret,
+		RateLimitPerSecond: endpoint.RateLimitPerSecond,
+		RateLimitBurst:     endpoint.RateLimitBurst,
+		CreatedAt:          endpoint.CreatedAt,
+		UpdatedAt:          endpoint.UpdatedAt,
+	})
+}
+
+func (h *EndpointHandler) RotateSecret(c *gin.Context) {
+	id := c.Param("id")
+	secret, err := h.db.RotateEndpointSecret(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"id": id, "secret": secret})
+}
+
+func (h *EndpointHandler) Get(c *gin.Context) {
+	id := c.Param("id")
+	endpoint, err := h.db.GetEndpoint(c.Request.Context(), id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if endpoint == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "endpoint not found"})
+		return
+	}
+	c.JSON(http.StatusOK, database.EndpointResponse{
+		ID:                 endpoint.ID,
+		URL:                endpoint.URL,
+		RateLimitPerSecond: endpoint.RateLimitPerSecond,
+		RateLimitBurst:     endpoint.RateLimitBurst,
+		CreatedAt:          endpoint.CreatedAt,
+		UpdatedAt:          endpoint.UpdatedAt,
+	})
 }
 
 type EventHandler struct {
@@ -87,7 +127,6 @@ func (h *EventHandler) Create(c *gin.Context) {
 
 func (h *EventHandler) List(c *gin.Context) {
 	status := c.Query("status")
-
 	events, err := h.db.ListEvents(c.Request.Context(), status, 50)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -96,13 +135,11 @@ func (h *EventHandler) List(c *gin.Context) {
 	if events == nil {
 		events = []database.Event{}
 	}
-
 	c.JSON(http.StatusOK, events)
 }
 
 func (h *EventHandler) Replay(c *gin.Context) {
 	eventID := c.Param("id")
-
 	event, err := h.db.GetEvent(c.Request.Context(), eventID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -136,6 +173,5 @@ func (h *StatsHandler) Get(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-
 	c.JSON(http.StatusOK, stats)
 }

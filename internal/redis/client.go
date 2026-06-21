@@ -11,6 +11,10 @@ type Client struct {
 	*redis.Client
 }
 
+func (c *Client) Raw() *redis.Client {
+	return c.Client
+}
+
 func Connect(redisURL string) (*Client, error) {
 	opts, err := redis.ParseURL(redisURL)
 	if err != nil {

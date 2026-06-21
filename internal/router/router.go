@@ -11,6 +11,8 @@ import (
 	"github.com/prateekkhurmi/hookforge/internal/dashboard"
 	"github.com/prateekkhurmi/hookforge/internal/database"
 	"github.com/prateekkhurmi/hookforge/internal/handler"
+	"github.com/prateekkhurmi/hookforge/internal/middleware"
+	"github.com/prateekkhurmi/hookforge/internal/ratelimit"
 	"github.com/prateekkhurmi/hookforge/internal/redis"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -32,15 +34,15 @@ func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler 
 				return "just now"
 			}
 			if d < time.Hour {
-				m := int(d.Minutes())
-				return formatDuration(m, "minute")
+				return fmt.Sprintf("%d minutes ago", int(d.Minutes()))
 			}
 			if d < 24*time.Hour {
-				h := int(d.Hours())
-				return formatDuration(h, "hour")
+				return fmt.Sprintf("%d hours ago", int(d.Hours()))
 			}
-			d2 := int(d.Hours() / 24)
-			return formatDuration(d2, "day")
+			return fmt.Sprintf("%d days ago", int(d.Hours()/24))
+		},
+		"json": func(v interface{}) template.JS {
+			return template.JS(fmt.Sprintf("%v", v))
 		},
 	})
 	r.LoadHTMLGlob("templates/*.html")
@@ -53,12 +55,22 @@ func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler 
 	ev := handler.NewEventHandler(db, rdb)
 	st := handler.NewStatsHandler(db)
 
+	rl := ratelimit.New(rdb)
+
 	api := r.Group("/api/v1")
 	{
 		api.POST("/endpoints", ep.Create)
-		api.POST("/events", ev.Create)
-		api.GET("/events", ev.List)
-		api.POST("/events/:id/replay", ev.Replay)
+		api.GET("/endpoints/:id", ep.Get)
+		api.POST("/endpoints/:id/rotate-secret", ep.RotateSecret)
+
+		events := api.Group("/events")
+		events.Use(middleware.RateLimit(db, rl))
+		{
+			events.POST("", ev.Create)
+			events.GET("", ev.List)
+			events.POST("/:id/replay", ev.Replay)
+		}
+
 		api.GET("/stats", st.Get)
 	}
 
@@ -67,14 +79,10 @@ func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler 
 	r.GET("/api/v1/dashboard/stats", dh.StatsPanel)
 	r.GET("/api/v1/dashboard/events", dh.EventsPanel)
 
+	ws := dashboard.NewWSHandler(db)
+	r.GET("/api/v1/ws", gin.WrapH(http.HandlerFunc(ws.Serve)))
+
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
 	return r
-}
-
-func formatDuration(n int, unit string) string {
-	if n == 1 {
-		return fmt.Sprintf("1 %s ago", unit)
-	}
-	return fmt.Sprintf("%d %ss ago", n, unit)
 }

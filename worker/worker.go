@@ -14,6 +14,7 @@ import (
 	"github.com/prateekkhurmi/hookforge/internal/config"
 	"github.com/prateekkhurmi/hookforge/internal/database"
 	"github.com/prateekkhurmi/hookforge/internal/metrics"
+	"github.com/prateekkhurmi/hookforge/internal/notifier"
 	"github.com/prateekkhurmi/hookforge/internal/redis"
 )
 
@@ -53,7 +54,6 @@ func (w *Worker) deliveryLoop(ctx context.Context) {
 				time.Sleep(100 * time.Millisecond)
 				continue
 			}
-
 			if err := w.deliver(ctx, eventID); err != nil {
 				log.Printf("delivery failed for event %s: %v", eventID, err)
 			}
@@ -67,17 +67,22 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 		return fmt.Errorf("get event: %w", err)
 	}
 
-	endpointURL, err := w.db.GetEndpointURL(ctx, event.EndpointID)
+	endpoint, err := w.db.GetEndpoint(ctx, event.EndpointID)
 	if err != nil {
 		return fmt.Errorf("get endpoint: %w", err)
 	}
-	if endpointURL == "" {
+	if endpoint == nil {
 		return fmt.Errorf("endpoint %s not found", event.EndpointID)
 	}
 
-	signature := signPayload(event.Payload, w.cfg.SigningSecret)
+	secret := endpoint.Secret
+	if secret == "" {
+		secret = w.cfg.SigningSecret
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, bytes.NewReader(event.Payload))
+	signature := signPayload(event.Payload, secret)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.URL, bytes.NewReader(event.Payload))
 	if err != nil {
 		return fmt.Errorf("creating request: %w", err)
 	}
@@ -94,9 +99,7 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 
 	if err != nil {
 		metrics.EventsTotal.WithLabelValues("failed").Inc()
-		if err := w.handleFailure(ctx, event); err != nil {
-			log.Printf("handle failure error: %v", err)
-		}
+		w.handleFailure(ctx, event, endpoint.SlackWebhookURL)
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -104,22 +107,19 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		metrics.EventsTotal.WithLabelValues("delivered").Inc()
 		metrics.DeliveryLatency.Observe(latency.Seconds())
-
 		if err := w.db.UpdateEventStatus(ctx, eventID, "delivered"); err != nil {
 			return fmt.Errorf("update status: %w", err)
 		}
-		log.Printf("delivered event %s to %s (status=%d, latency=%v)", eventID, endpointURL, resp.StatusCode, latency)
+		log.Printf("delivered event %s to %s (status=%d, latency=%v)", eventID, endpoint.URL, resp.StatusCode, latency)
 		return nil
 	}
 
 	metrics.EventsTotal.WithLabelValues("failed").Inc()
-	if err := w.handleFailure(ctx, event); err != nil {
-		log.Printf("handle failure error: %v", err)
-	}
-	return fmt.Errorf("bad status %d from %s", resp.StatusCode, endpointURL)
+	w.handleFailure(ctx, event, endpoint.SlackWebhookURL)
+	return fmt.Errorf("bad status %d from %s", resp.StatusCode, endpoint.URL)
 }
 
-func (w *Worker) handleFailure(ctx context.Context, event *database.Event) error {
+func (w *Worker) handleFailure(ctx context.Context, event *database.Event, slackWebhook string) {
 	event.Attempts++
 
 	backoff := calculateBackoff(event.Attempts)
@@ -129,13 +129,14 @@ func (w *Worker) handleFailure(ctx context.Context, event *database.Event) error
 		metrics.EventsTotal.WithLabelValues("dead").Inc()
 		w.db.RecordAttempt(ctx, event.ID, event.Attempts, "dead", nil)
 		log.Printf("event %s → dead letter queue (%d/%d)", event.ID, event.Attempts, event.MaxRetries)
-		return nil
+		if slackWebhook != "" {
+			notifier.SendSlackAlert(slackWebhook, event.ID, event.EndpointID, "dead", event.Attempts, event.MaxRetries)
+		}
+		return
 	}
 
 	w.db.RecordAttempt(ctx, event.ID, event.Attempts, "retrying", &nextRetryAt)
-
 	log.Printf("event %s failed (attempt %d/%d), retrying in %v", event.ID, event.Attempts, event.MaxRetries, backoff)
-	return nil
 }
 
 func (w *Worker) retryLoop(ctx context.Context) {
@@ -161,14 +162,12 @@ func (w *Worker) processRetries(ctx context.Context) {
 	}
 
 	now := time.Now()
-	retryCount := 0
 	for _, event := range events {
 		if event.NextRetryAt != nil && event.NextRetryAt.Before(now) {
 			if err := w.rdb.EnqueueEvent(ctx, event.ID); err != nil {
 				log.Printf("retry enqueue error for event %s: %v", event.ID, err)
 				continue
 			}
-			retryCount++
 			log.Printf("re-enqueued event %s for retry", event.ID)
 		}
 	}

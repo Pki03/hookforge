@@ -16,7 +16,9 @@
       display: flex; align-items: center; justify-content: space-between;
     }
     .header h1 { font-size: 1.25rem; font-weight: 600; color: #38bdf8; }
-    .header span { color: #64748b; font-size: 0.875rem; }
+    .header .status { display: flex; align-items: center; gap: 0.5rem; font-size: 0.75rem; color: #64748b; }
+    .header .dot { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+    .header .dot.offline { background: #ef4444; }
     .container { max-width: 1200px; margin: 2rem auto; padding: 0 2rem; }
     .stats-grid {
       display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -66,7 +68,10 @@
 <body>
   <div class="header">
     <h1>HookForge Dashboard</h1>
-    <span>Live monitoring</span>
+    <div class="status">
+      <span class="dot" id="ws-dot"></span>
+      <span id="ws-status">Connecting...</span>
+    </div>
   </div>
   <div class="container">
     <div id="stats-grid"
@@ -83,5 +88,81 @@
       {{template "_events.html" .}}
     </div>
   </div>
+
+  <script>
+    (function() {
+      var dot = document.getElementById('ws-dot');
+      var statusEl = document.getElementById('ws-status');
+      var proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      var ws = new WebSocket(proto + '//' + window.location.host + '/api/v1/ws');
+
+      ws.onopen = function() {
+        dot.className = 'dot';
+        statusEl.textContent = 'Live (WS)';
+      };
+
+      ws.onclose = function() {
+        dot.className = 'dot offline';
+        statusEl.textContent = 'Fallback (HTMX)';
+      };
+
+      ws.onerror = function() {
+        dot.className = 'dot offline';
+        statusEl.textContent = 'Fallback (HTMX)';
+      };
+
+      ws.onmessage = function(e) {
+        try {
+          var data = JSON.parse(e.data);
+          if (data.stats) renderStats(data.stats);
+          if (data.events) renderEvents(data.events);
+        } catch(err) {}
+      };
+
+      function renderStats(s) {
+        var html = '<div class="stats-grid">' +
+          card(s.total_sent, 'Total Events', '') +
+          card(s.delivered, 'Delivered', 'delivered') +
+          card(s.failed, 'Failed', 'failed') +
+          card(s.dead, 'Dead Letter', 'dead') +
+          card(s.pending, 'Pending / Retrying', 'pending') +
+          card(s.delivery_rate_percent.toFixed(1) + '%', 'Delivery Rate', 'rate') +
+          '</div>';
+        document.getElementById('stats-grid').innerHTML = html;
+      }
+
+      function card(val, label, cls) {
+        return '<div class="stat-card ' + cls + '"><div class="value">' + val + '</div><div class="label">' + label + '</div></div>';
+      }
+
+      function renderEvents(events) {
+        var html = '<table><thead><tr><th>Event ID</th><th>Endpoint</th><th>Status</th><th>Attempts</th><th>Age</th></tr></thead><tbody>';
+        if (!events || events.length === 0) {
+          html += '<tr><td colspan="5" style="text-align:center;color:#64748b;padding:2rem;">No events yet</td></tr>';
+        } else {
+          for (var i = 0; i < events.length; i++) {
+            var e = events[i];
+            html += '<tr>' +
+              '<td class="mono">' + e.id.slice(0, 8) + '</td>' +
+              '<td class="mono">' + e.endpoint_id.slice(0, 8) + '</td>' +
+              '<td><span class="badge ' + e.status + '">' + e.status + '</span></td>' +
+              '<td>' + e.attempts + '/' + e.max_retries + '</td>' +
+              '<td>' + timeAgo(e.created_at) + '</td>' +
+              '</tr>';
+          }
+        }
+        html += '</tbody></table>';
+        document.getElementById('events-table').innerHTML = html;
+      }
+
+      function timeAgo(iso) {
+        var ms = Date.now() - new Date(iso).getTime();
+        if (ms < 60000) return 'just now';
+        if (ms < 3600000) return Math.floor(ms / 60000) + ' minutes ago';
+        if (ms < 86400000) return Math.floor(ms / 3600000) + ' hours ago';
+        return Math.floor(ms / 86400000) + ' days ago';
+      }
+    })();
+  </script>
 </body>
 </html>
