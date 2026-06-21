@@ -59,6 +59,7 @@ func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler 
 
 	api := r.Group("/api/v1")
 	{
+		api.GET("/endpoints", ep.List)
 		api.POST("/endpoints", ep.Create)
 		api.GET("/endpoints/:id", ep.Get)
 		api.POST("/endpoints/:id/rotate-secret", ep.RotateSecret)
@@ -66,6 +67,7 @@ func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler 
 		events := api.Group("/events")
 		events.Use(middleware.RateLimit(db, rl))
 		{
+			api.GET("/events/:id", ev.Get)
 			events.POST("", ev.Create)
 			events.GET("", ev.List)
 			events.POST("/:id/replay", ev.Replay)
@@ -81,6 +83,7 @@ func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler 
 
 	ws := dashboard.NewWSHandler(db)
 	r.GET("/api/v1/ws", gin.WrapH(http.HandlerFunc(ws.Serve)))
+	r.GET("/dashboard/events/:id", dh.EventDetail)
 
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 

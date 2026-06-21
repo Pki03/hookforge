@@ -66,6 +66,27 @@ func (db *DB) GetEndpointURL(ctx context.Context, id string) (string, error) {
 	return url, nil
 }
 
+func (db *DB) ListEndpoints(ctx context.Context) ([]Endpoint, error) {
+	rows, err := db.Pool.Query(ctx,
+		`SELECT id, url, '' as secret, '' as slack_webhook_url, rate_limit_per_second, rate_limit_burst, created_at, updated_at
+		 FROM endpoints ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("listing endpoints: %w", err)
+	}
+	defer rows.Close()
+
+	var endpoints []Endpoint
+	for rows.Next() {
+		var e Endpoint
+		if err := rows.Scan(&e.ID, &e.URL, &e.Secret, &e.SlackWebhookURL, &e.RateLimitPerSecond, &e.RateLimitBurst, &e.CreatedAt, &e.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scanning endpoint: %w", err)
+		}
+		endpoints = append(endpoints, e)
+	}
+	return endpoints, nil
+}
+
 func (db *DB) RotateEndpointSecret(ctx context.Context, id string) (string, error) {
 	secret := generateSecret()
 	_, err := db.Pool.Exec(ctx,

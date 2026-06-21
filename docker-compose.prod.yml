@@ -1,0 +1,74 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hookforge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: hookforge
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hookforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: always
+    networks:
+      - internal
+
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      PORT: "8080"
+      DATABASE_URL: "postgres://hookforge:${POSTGRES_PASSWORD:?}@postgres:5432/hookforge?sslmode=disable"
+      REDIS_URL: "redis://redis:6379/0"
+      SIGNING_SECRET: ${SIGNING_SECRET:?SIGNING_SECRET is required}
+      WORKER_COUNT: ${WORKER_COUNT:-5}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+    networks:
+      - internal
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN is required}
+    depends_on:
+      - app
+    restart: always
+    networks:
+      - internal
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+
+networks:
+  internal:

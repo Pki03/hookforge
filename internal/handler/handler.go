@@ -91,6 +91,30 @@ type createEventReq struct {
 	Payload    json.RawMessage `json:"payload" binding:"required"`
 }
 
+func (h *EndpointHandler) List(c *gin.Context) {
+	endpoints, err := h.db.ListEndpoints(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	var resp []database.EndpointResponse
+	for _, ep := range endpoints {
+		resp = append(resp, database.EndpointResponse{
+			ID:                 ep.ID,
+			URL:                ep.URL,
+			RateLimitPerSecond: ep.RateLimitPerSecond,
+			RateLimitBurst:     ep.RateLimitBurst,
+			CreatedAt:          ep.CreatedAt,
+			UpdatedAt:          ep.UpdatedAt,
+		})
+	}
+	if resp == nil {
+		resp = []database.EndpointResponse{}
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
 func (h *EventHandler) Create(c *gin.Context) {
 	var req createEventReq
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -136,6 +160,29 @@ func (h *EventHandler) List(c *gin.Context) {
 		events = []database.Event{}
 	}
 	c.JSON(http.StatusOK, events)
+}
+
+func (h *EventHandler) Get(c *gin.Context) {
+	eventID := c.Param("id")
+	event, err := h.db.GetEvent(c.Request.Context(), eventID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "event not found"})
+		return
+	}
+
+	attempts, err := h.db.ListAttempts(c.Request.Context(), eventID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if attempts == nil {
+		attempts = []database.DeliveryAttempt{}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"event":    event,
+		"attempts": attempts,
+	})
 }
 
 func (h *EventHandler) Replay(c *gin.Context) {

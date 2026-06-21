@@ -1,0 +1,62 @@
+<div style="background:#1e293b;border:1px solid #334155;border-radius:0.75rem;padding:1.5rem;">
+  <h3 style="font-size:1rem;font-weight:600;margin-bottom:1rem;color:#e2e8f0;">Event Details</h3>
+  <div style="display:grid;grid-template-columns:auto 1fr;gap:0.5rem 1rem;font-size:0.875rem;margin-bottom:1.5rem;">
+    <span style="color:#64748b;">ID</span>
+    <span class="mono" style="color:#e2e8f0;">{{.event.ID}}</span>
+    <span style="color:#64748b;">Endpoint</span>
+    <span class="mono" style="color:#e2e8f0;">{{.event.EndpointID}}</span>
+    <span style="color:#64748b;">Status</span>
+    <span><span class="badge {{.event.Status}}">{{.event.Status}}</span></span>
+    <span style="color:#64748b;">Created</span>
+    <span style="color:#e2e8f0;">{{since .event.CreatedAt}}</span>
+    <span style="color:#64748b;">Attempts</span>
+    <span style="color:#e2e8f0;">{{.event.Attempts}} / {{.event.MaxRetries}}</span>
+  </div>
+
+  <h4 style="font-size:0.875rem;font-weight:600;margin-bottom:0.75rem;color:#94a3b8;">Delivery Attempts</h4>
+  {{if not .attempts}}
+    <p style="color:#64748b;font-size:0.875rem;text-align:center;padding:1rem;">No delivery attempts yet</p>
+  {{else}}
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Time</th>
+        <th>Status Code</th>
+        <th>Duration (ms)</th>
+        <th>Error</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .attempts}}
+      <tr>
+        <td>{{.AttemptNum}}</td>
+        <td style="font-size:0.8rem;color:#94a3b8;">{{since .AttemptedAt}}</td>
+        <td>
+          {{if .StatusCode}}
+            <span class="badge {{if ge .StatusCode 200}}delivered{{else}}failed{{end}}">{{.StatusCode}}</span>
+          {{else}}
+            <span style="color:#64748b;">—</span>
+          {{end}}
+        </td>
+        <td>{{.DurationMs}}</td>
+        <td style="font-size:0.8rem;color:#ef4444;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          {{if .ErrorMessage}}{{.ErrorMessage}}{{else}}—{{end}}
+        </td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+
+  {{if eq .event.Status "dead"}}
+  <div style="margin-top:1rem;text-align:right;">
+    <button
+      hx-post="/api/v1/events/{{.event.ID}}/replay"
+      hx-swap="none"
+      style="background:#f59e0b;color:#0f172a;border:none;padding:0.5rem 1rem;border-radius:0.5rem;font-size:0.875rem;font-weight:600;cursor:pointer;">
+      Replay Event
+    </button>
+  </div>
+  {{end}}
+</div>

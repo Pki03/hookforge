@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -61,6 +62,13 @@ func main() {
 	<-quit
 	log.Println("shutting down gracefully...")
 	cancel()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("server shutdown error: %v", err)
+	}
+	log.Println("server stopped")
 }
 
 func runMigrations(databaseURL string) {

@@ -52,6 +52,7 @@
     .badge.pending { background: #1e293b; color: #94a3b8; }
     .badge.retrying { background: #1c1917; color: #fb923c; }
     .mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem; color: #94a3b8; }
+    tbody tr:hover { background: #334155; }
     @media (prefers-color-scheme: light) {
       body { background: #f8fafc; color: #1e293b; }
       .header { background: #ffffff; border-color: #e2e8f0; }
@@ -80,12 +81,22 @@
          hx-swap="innerHTML">
       {{template "_stats.html" .}}
     </div>
-    <h2 style="font-size:1rem;margin-bottom:0.75rem;color:#94a3b8;">Recent Events</h2>
-    <div id="events-table"
-         hx-get="/api/v1/dashboard/events"
-         hx-trigger="every 3s"
-         hx-swap="innerHTML">
-      {{template "_events.html" .}}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+      <div>
+        <h2 style="font-size:1rem;margin-bottom:0.75rem;color:#94a3b8;">Recent Events</h2>
+        <div id="events-table"
+             hx-get="/api/v1/dashboard/events"
+             hx-trigger="every 3s"
+             hx-swap="innerHTML">
+          {{template "_events.html" .}}
+        </div>
+      </div>
+      <div>
+        <h2 style="font-size:1rem;margin-bottom:0.75rem;color:#94a3b8;">Event Detail</h2>
+        <div id="event-detail-panel" style="background:#1e293b;border:1px solid #334155;border-radius:0.75rem;padding:1.5rem;text-align:center;color:#64748b;font-size:0.875rem;">
+          Click an event to see details
+        </div>
+      </div>
     </div>
   </div>
 

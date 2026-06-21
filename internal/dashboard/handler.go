@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"log"
 	"net/http"
 	"time"
 
@@ -27,6 +28,31 @@ func (h *Handler) StatsPanel(c *gin.Context) {
 		return
 	}
 	c.HTML(http.StatusOK, "_stats.html", stats)
+}
+
+func (h *Handler) EventDetail(c *gin.Context) {
+	eventID := c.Param("id")
+	event, err := h.db.GetEvent(c.Request.Context(), eventID)
+	if err != nil {
+		log.Printf("event detail error: %v", err)
+		c.String(http.StatusNotFound, "Event not found")
+		return
+	}
+
+	attempts, err := h.db.ListAttempts(c.Request.Context(), eventID)
+	if err != nil {
+		log.Printf("list attempts error: %v", err)
+		attempts = []database.DeliveryAttempt{}
+	}
+
+	if attempts == nil {
+		attempts = []database.DeliveryAttempt{}
+	}
+
+	c.HTML(http.StatusOK, "_event_detail.html", gin.H{
+		"event":    event,
+		"attempts": attempts,
+	})
 }
 
 func (h *Handler) EventsPanel(c *gin.Context) {

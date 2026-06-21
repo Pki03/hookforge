@@ -13,7 +13,7 @@
     <tr><td colspan="5" style="text-align:center;color:#64748b;padding:2rem;">No events yet</td></tr>
     {{else}}
     {{range .events}}
-    <tr>
+    <tr hx-get="/dashboard/events/{{.ID}}" hx-target="#event-detail-panel" hx-swap="innerHTML" style="cursor:pointer;">
       <td class="mono">{{shortID .ID}}</td>
       <td class="mono">{{shortID .EndpointID}}</td>
       <td><span class="badge {{.Status}}">{{.Status}}</span></td>

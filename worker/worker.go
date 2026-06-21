@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -37,9 +38,11 @@ func New(db *database.DB, rdb *redis.Client, cfg *config.Config) *Worker {
 }
 
 func (w *Worker) Start(ctx context.Context) {
-	go w.deliveryLoop(ctx)
+	for i := 0; i < w.cfg.WorkerCount; i++ {
+		go w.deliveryLoop(ctx)
+	}
 	go w.retryLoop(ctx)
-	log.Println("worker started")
+	log.Printf("worker started (%d delivery goroutines)", w.cfg.WorkerCount)
 }
 
 func (w *Worker) deliveryLoop(ctx context.Context) {
@@ -93,30 +96,37 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 
 	start := time.Now()
 	resp, err := w.client.Do(req)
-	latency := time.Since(start)
+	durationMs := int(time.Since(start).Milliseconds())
 
 	metrics.DeliveryAttempts.Inc()
 
 	if err != nil {
 		metrics.EventsTotal.WithLabelValues("failed").Inc()
+		w.db.CreateAttempt(ctx, eventID, event.Attempts+1, nil, nil, strPtr(err.Error()), durationMs)
 		w.handleFailure(ctx, event, endpoint.SlackWebhookURL)
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 500))
+	bodyStr := string(bodyBytes)
+
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		metrics.EventsTotal.WithLabelValues("delivered").Inc()
-		metrics.DeliveryLatency.Observe(latency.Seconds())
+		metrics.DeliveryLatency.Observe(time.Since(start).Seconds())
 		if err := w.db.UpdateEventStatus(ctx, eventID, "delivered"); err != nil {
 			return fmt.Errorf("update status: %w", err)
 		}
-		log.Printf("delivered event %s to %s (status=%d, latency=%v)", eventID, endpoint.URL, resp.StatusCode, latency)
+		w.db.CreateAttempt(ctx, eventID, event.Attempts+1, &resp.StatusCode, &bodyStr, nil, durationMs)
+		log.Printf("delivered event %s to %s (status=%d, latency=%dms)", eventID, endpoint.URL, resp.StatusCode, durationMs)
 		return nil
 	}
 
 	metrics.EventsTotal.WithLabelValues("failed").Inc()
+	statusCode := resp.StatusCode
+	w.db.CreateAttempt(ctx, eventID, event.Attempts+1, &statusCode, nil, strPtr(fmt.Sprintf("bad status %d from target", statusCode)), durationMs)
 	w.handleFailure(ctx, event, endpoint.SlackWebhookURL)
-	return fmt.Errorf("bad status %d from %s", resp.StatusCode, endpoint.URL)
+	return fmt.Errorf("bad status %d from %s", statusCode, endpoint.URL)
 }
 
 func (w *Worker) handleFailure(ctx context.Context, event *database.Event, slackWebhook string) {
@@ -127,7 +137,7 @@ func (w *Worker) handleFailure(ctx context.Context, event *database.Event, slack
 
 	if event.Attempts >= event.MaxRetries {
 		metrics.EventsTotal.WithLabelValues("dead").Inc()
-		w.db.RecordAttempt(ctx, event.ID, event.Attempts, "dead", nil)
+		w.db.UpdateEventStatus(ctx, event.ID, "dead")
 		log.Printf("event %s → dead letter queue (%d/%d)", event.ID, event.Attempts, event.MaxRetries)
 		if slackWebhook != "" {
 			notifier.SendSlackAlert(slackWebhook, event.ID, event.EndpointID, "dead", event.Attempts, event.MaxRetries)
@@ -135,8 +145,13 @@ func (w *Worker) handleFailure(ctx context.Context, event *database.Event, slack
 		return
 	}
 
-	w.db.RecordAttempt(ctx, event.ID, event.Attempts, "retrying", &nextRetryAt)
+	w.db.UpdateEventStatus(ctx, event.ID, "retrying")
+	w.db.IncrementAttempts(ctx, event.ID, &nextRetryAt)
 	log.Printf("event %s failed (attempt %d/%d), retrying in %v", event.ID, event.Attempts, event.MaxRetries, backoff)
+}
+
+func strPtr(s string) *string {
+	return &s
 }
 
 func (w *Worker) retryLoop(ctx context.Context) {

@@ -23,6 +23,17 @@ type EndpointResponse struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
+type DeliveryAttempt struct {
+	ID           string     `json:"id"`
+	EventID      string     `json:"event_id"`
+	AttemptNum   int        `json:"attempt_num"`
+	StatusCode   *int       `json:"status_code,omitempty"`
+	ResponseBody *string    `json:"response_body,omitempty"`
+	ErrorMessage *string    `json:"error_message,omitempty"`
+	DurationMs   int        `json:"duration_ms"`
+	AttemptedAt  time.Time  `json:"attempted_at"`
+}
+
 type Event struct {
 	ID          string     `json:"id"`
 	EndpointID  string     `json:"endpoint_id"`
