@@ -122,21 +122,17 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 func (w *Worker) handleFailure(ctx context.Context, event *database.Event) error {
 	event.Attempts++
 
-	if event.Attempts >= event.MaxRetries {
-		metrics.EventsTotal.WithLabelValues("dead").Inc()
-		if err := w.db.UpdateEventStatus(ctx, event.ID, "dead"); err != nil {
-			return fmt.Errorf("mark dead: %w", err)
-		}
-		log.Printf("event %s moved to dead letter queue after %d attempts", event.ID, event.Attempts)
-		return nil
-	}
-
 	backoff := calculateBackoff(event.Attempts)
 	nextRetryAt := time.Now().Add(backoff)
 
-	if err := w.db.IncrementAttempts(ctx, event.ID, &nextRetryAt); err != nil {
-		return fmt.Errorf("increment attempts: %w", err)
+	if event.Attempts >= event.MaxRetries {
+		metrics.EventsTotal.WithLabelValues("dead").Inc()
+		w.db.RecordAttempt(ctx, event.ID, event.Attempts, "dead", nil)
+		log.Printf("event %s → dead letter queue (%d/%d)", event.ID, event.Attempts, event.MaxRetries)
+		return nil
 	}
+
+	w.db.RecordAttempt(ctx, event.ID, event.Attempts, "retrying", &nextRetryAt)
 
 	log.Printf("event %s failed (attempt %d/%d), retrying in %v", event.ID, event.Attempts, event.MaxRetries, backoff)
 	return nil

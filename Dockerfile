@@ -11,5 +11,6 @@ RUN apk add --no-cache ca-certificates
 WORKDIR /app
 COPY --from=builder /hookforge /usr/local/bin/hookforge
 COPY --from=builder /app/templates ./templates
+COPY --from=builder /app/db ./db
 EXPOSE 8080
 CMD ["hookforge"]

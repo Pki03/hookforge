@@ -50,9 +50,17 @@ func (db *DB) UpdateEventStatus(ctx context.Context, id string, status string) e
 	return err
 }
 
+func (db *DB) RecordAttempt(ctx context.Context, id string, attempts int, status string, nextRetryAt *time.Time) error {
+	_, err := db.Pool.Exec(ctx,
+		`UPDATE events SET attempts = $1, status = $2, next_retry_at = $3, updated_at = NOW() WHERE id = $4`,
+		attempts, status, nextRetryAt, id,
+	)
+	return err
+}
+
 func (db *DB) IncrementAttempts(ctx context.Context, id string, nextRetryAt *time.Time) error {
 	_, err := db.Pool.Exec(ctx,
-		`UPDATE events SET attempts = attempts + 1, next_retry_at = $1, updated_at = NOW() WHERE id = $2`,
+		`UPDATE events SET attempts = attempts + 1, status = 'retrying', next_retry_at = $1, updated_at = NOW() WHERE id = $2`,
 		nextRetryAt, id,
 	)
 	return err
