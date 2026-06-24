@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,25 +12,40 @@ import (
 	"github.com/prateekkhurmi/hookforge/internal/database"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+func NewUpgrader(allowedOrigins string) websocket.Upgrader {
+	return websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			if allowedOrigins == "" || allowedOrigins == "*" {
+				return true
+			}
+			origin := r.Header.Get("Origin")
+			for _, allowed := range strings.Split(allowedOrigins, ",") {
+				if strings.TrimSpace(allowed) == origin {
+					return true
+				}
+			}
+			return false
+		},
+	}
 }
 
 type WSHandler struct {
-	db      *database.DB
-	clients map[*websocket.Conn]bool
-	mu      sync.RWMutex
+	db       *database.DB
+	clients  map[*websocket.Conn]bool
+	mu       sync.RWMutex
+	upgrader websocket.Upgrader
 }
 
-func NewWSHandler(db *database.DB) *WSHandler {
+func NewWSHandler(db *database.DB, allowedOrigins string) *WSHandler {
 	return &WSHandler{
-		db:      db,
-		clients: make(map[*websocket.Conn]bool),
+		db:       db,
+		clients:  make(map[*websocket.Conn]bool),
+		upgrader: NewUpgrader(allowedOrigins),
 	}
 }
 
 func (h *WSHandler) Serve(c http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(c, r, nil)
+	conn, err := h.upgrader.Upgrade(c, r, nil)
 	if err != nil {
 		log.Printf("ws upgrade: %v", err)
 		return

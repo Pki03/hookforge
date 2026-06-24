@@ -96,7 +96,7 @@ func TestCreateAndGetEvent(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/webhook", "")
+	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/webhook", "", "", nil)
 	if err != nil {
 		t.Fatalf("create endpoint: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestRetryAndDeadLetter(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/dlq-test", "")
+	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/dlq-test", "", "", nil)
 	if err != nil {
 		t.Fatalf("create endpoint: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestDeliveryAttemptLog(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/attempt-test", "")
+	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/attempt-test", "", "", nil)
 	if err != nil {
 		t.Fatalf("create endpoint: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestListEndpoints(t *testing.T) {
 		"https://third.example.com/webhook",
 	}
 	for _, url := range urls {
-		_, _, err := testDB.CreateEndpoint(ctx, url, "")
+		_, _, err := testDB.CreateEndpoint(ctx, url, "", "", nil)
 		if err != nil {
 			t.Fatalf("create endpoint %s: %v", url, err)
 		}

@@ -13,6 +13,19 @@ const (
 	StateHalfOpen State = 2
 )
 
+func (s State) String() string {
+	switch s {
+	case StateClosed:
+		return "closed"
+	case StateOpen:
+		return "open"
+	case StateHalfOpen:
+		return "half-open"
+	default:
+		return "unknown"
+	}
+}
+
 type Breaker struct {
 	failureThreshold int
 	resetTimeout     time.Duration

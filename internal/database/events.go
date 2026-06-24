@@ -6,8 +6,11 @@ import (
 	"time"
 )
 
+var eventColumns = `id, endpoint_id, event_type, payload, status, attempts, max_retries, next_retry_at, created_at, updated_at`
+
 type CreateEventParams struct {
 	EndpointID string
+	EventType  string
 	Payload    []byte
 	MaxRetries int
 }
@@ -19,23 +22,31 @@ func (db *DB) CreateEvent(ctx context.Context, p CreateEventParams) (*Event, err
 
 	e := &Event{}
 	err := db.Pool.QueryRow(ctx,
-		`INSERT INTO events (endpoint_id, payload, max_retries, status)
-		 VALUES ($1, $2, $3, 'pending')
-		 RETURNING id, endpoint_id, payload, status, attempts, max_retries, created_at, updated_at`,
-		p.EndpointID, p.Payload, p.MaxRetries,
-	).Scan(&e.ID, &e.EndpointID, &e.Payload, &e.Status, &e.Attempts, &e.MaxRetries, &e.CreatedAt, &e.UpdatedAt)
+		`INSERT INTO events (endpoint_id, event_type, payload, max_retries, status)
+		 VALUES ($1, $2, $3, $4, 'pending')
+		 RETURNING `+eventColumns,
+		p.EndpointID, p.EventType, p.Payload, p.MaxRetries,
+	).Scan(&e.ID, &e.EndpointID, &e.EventType, &e.Payload, &e.Status, &e.Attempts, &e.MaxRetries, &e.NextRetryAt, &e.CreatedAt, &e.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("creating event: %w", err)
 	}
 	return e, nil
 }
 
-func (db *DB) GetEvent(ctx context.Context, id string) (*Event, error) {
+func scanEvent(row interface{ Scan(...interface{}) error }) (*Event, error) {
 	e := &Event{}
-	err := db.Pool.QueryRow(ctx,
-		`SELECT id, endpoint_id, payload, status, attempts, max_retries, next_retry_at, created_at, updated_at
-		 FROM events WHERE id = $1`, id,
-	).Scan(&e.ID, &e.EndpointID, &e.Payload, &e.Status, &e.Attempts, &e.MaxRetries, &e.NextRetryAt, &e.CreatedAt, &e.UpdatedAt)
+	err := row.Scan(&e.ID, &e.EndpointID, &e.EventType, &e.Payload, &e.Status, &e.Attempts, &e.MaxRetries, &e.NextRetryAt, &e.CreatedAt, &e.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+func (db *DB) GetEvent(ctx context.Context, id string) (*Event, error) {
+	row := db.Pool.QueryRow(ctx,
+		`SELECT `+eventColumns+` FROM events WHERE id = $1`, id,
+	)
+	e, err := scanEvent(row)
 	if err != nil {
 		return nil, fmt.Errorf("getting event: %w", err)
 	}
@@ -72,8 +83,7 @@ func (db *DB) ListEvents(ctx context.Context, status string, limit int) ([]Event
 	}
 
 	rows, err := db.Pool.Query(ctx,
-		`SELECT id, endpoint_id, payload, status, attempts, max_retries, next_retry_at, created_at, updated_at
-		 FROM events WHERE ($1 = '' OR status = $1)
+		`SELECT `+eventColumns+` FROM events WHERE ($1 = '' OR status = $1)
 		 ORDER BY created_at DESC LIMIT $2`,
 		status, limit,
 	)
@@ -84,11 +94,11 @@ func (db *DB) ListEvents(ctx context.Context, status string, limit int) ([]Event
 
 	var events []Event
 	for rows.Next() {
-		var e Event
-		if err := rows.Scan(&e.ID, &e.EndpointID, &e.Payload, &e.Status, &e.Attempts, &e.MaxRetries, &e.NextRetryAt, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		e, err := scanEvent(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scanning event: %w", err)
 		}
-		events = append(events, e)
+		events = append(events, *e)
 	}
 	return events, nil
 }

@@ -159,7 +159,7 @@ func TestDBOperations(t *testing.T) {
 	db := integrationDB(t)
 	ctx := context.Background()
 
-	endpoint, _, err := db.CreateEndpoint(ctx, "https://httpbin.org/post", "")
+	endpoint, _, err := db.CreateEndpoint(ctx, "https://httpbin.org/post", "", "", nil)
 	if err != nil {
 		t.Fatalf("create endpoint: %v", err)
 	}

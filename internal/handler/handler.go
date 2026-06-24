@@ -3,11 +3,26 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 
 	"github.com/gin-gonic/gin"
 	"github.com/prateekkhurmi/hookforge/internal/database"
 	"github.com/prateekkhurmi/hookforge/internal/redis"
 )
+
+func validateTargetURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return err
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return err
+	}
+	if u.Host == "" {
+		return err
+	}
+	return nil
+}
 
 type EndpointHandler struct {
 	db *database.DB
@@ -18,8 +33,10 @@ func NewEndpointHandler(db *database.DB) *EndpointHandler {
 }
 
 type createEndpointReq struct {
-	URL             string `json:"url" binding:"required"`
-	SlackWebhookURL string `json:"slack_webhook_url"`
+	URL               string   `json:"url" binding:"required"`
+	SlackWebhookURL   string   `json:"slack_webhook_url"`
+	Email             string   `json:"email"`
+	AllowedEventTypes []string `json:"allowed_event_types"`
 }
 
 func (h *EndpointHandler) Create(c *gin.Context) {
@@ -29,7 +46,12 @@ func (h *EndpointHandler) Create(c *gin.Context) {
 		return
 	}
 
-	endpoint, secret, err := h.db.CreateEndpoint(c.Request.Context(), req.URL, req.SlackWebhookURL)
+	if err := validateTargetURL(req.URL); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "invalid target URL: must be http or https with a valid host"})
+		return
+	}
+
+	endpoint, secret, err := h.db.CreateEndpoint(c.Request.Context(), req.URL, req.SlackWebhookURL, req.Email, req.AllowedEventTypes)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -39,6 +61,7 @@ func (h *EndpointHandler) Create(c *gin.Context) {
 		ID:                 endpoint.ID,
 		URL:                endpoint.URL,
 		Secret:             secret,
+		AllowedEventTypes:  endpoint.AllowedEventTypes,
 		RateLimitPerSecond: endpoint.RateLimitPerSecond,
 		RateLimitBurst:     endpoint.RateLimitBurst,
 		CreatedAt:          endpoint.CreatedAt,
@@ -70,6 +93,7 @@ func (h *EndpointHandler) Get(c *gin.Context) {
 	c.JSON(http.StatusOK, database.EndpointResponse{
 		ID:                 endpoint.ID,
 		URL:                endpoint.URL,
+		AllowedEventTypes:  endpoint.AllowedEventTypes,
 		RateLimitPerSecond: endpoint.RateLimitPerSecond,
 		RateLimitBurst:     endpoint.RateLimitBurst,
 		CreatedAt:          endpoint.CreatedAt,
@@ -88,6 +112,7 @@ func NewEventHandler(db *database.DB, rdb *redis.Client) *EventHandler {
 
 type createEventReq struct {
 	EndpointID string          `json:"endpoint_id" binding:"required"`
+	EventType  string          `json:"event_type"`
 	Payload    json.RawMessage `json:"payload" binding:"required"`
 }
 
@@ -100,9 +125,14 @@ func (h *EndpointHandler) List(c *gin.Context) {
 
 	var resp []database.EndpointResponse
 	for _, ep := range endpoints {
+		allowed := ep.AllowedEventTypes
+		if allowed == nil {
+			allowed = []string{}
+		}
 		resp = append(resp, database.EndpointResponse{
 			ID:                 ep.ID,
 			URL:                ep.URL,
+			AllowedEventTypes:  allowed,
 			RateLimitPerSecond: ep.RateLimitPerSecond,
 			RateLimitBurst:     ep.RateLimitBurst,
 			CreatedAt:          ep.CreatedAt,
@@ -132,8 +162,26 @@ func (h *EventHandler) Create(c *gin.Context) {
 		return
 	}
 
+	if len(endpoint.AllowedEventTypes) > 0 {
+		allowed := false
+		for _, t := range endpoint.AllowedEventTypes {
+			if t == req.EventType {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":              "event_type not allowed for this endpoint",
+				"allowed_event_types": endpoint.AllowedEventTypes,
+			})
+			return
+		}
+	}
+
 	event, err := h.db.CreateEvent(c.Request.Context(), database.CreateEventParams{
 		EndpointID: req.EndpointID,
+		EventType:  req.EventType,
 		Payload:    req.Payload,
 	})
 	if err != nil {
@@ -151,6 +199,7 @@ func (h *EventHandler) Create(c *gin.Context) {
 
 func (h *EventHandler) List(c *gin.Context) {
 	status := c.Query("status")
+	eventType := c.Query("event_type")
 	events, err := h.db.ListEvents(c.Request.Context(), status, 50)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -159,6 +208,17 @@ func (h *EventHandler) List(c *gin.Context) {
 	if events == nil {
 		events = []database.Event{}
 	}
+
+	if eventType != "" {
+		var filtered []database.Event
+		for _, e := range events {
+			if e.EventType == eventType {
+				filtered = append(filtered, e)
+			}
+		}
+		events = filtered
+	}
+
 	c.JSON(http.StatusOK, events)
 }
 

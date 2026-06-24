@@ -31,7 +31,13 @@ HookForge is a production-ready webhook delivery engine that fits on a €4/mo V
 - Prometheus metrics (`/metrics`) — counters, histograms, gauges
 - Single `docker-compose up` deploy: Go + Postgres + Redis
 - Full test suite with testcontainers-go (real Postgres + Redis containers)
-- Slack failure alerts on dead letter escalation
+- Slack + Email failure alerts on dead letter escalation
+- Event type filtering: endpoints subscribe to specific event types
+- Kubernetes Helm chart for production deploy (`deploy/helm/hookforge/`)
+- Circuit breaker per endpoint (5-failure threshold, 30s auto-reset)
+- JSON structured logging (log/slog)
+- OpenAPI 3.0 spec with Swagger UI at `/api/docs`
+- Race-condition tested CI (`go test -race -shuffle=on`)
 
 ## Quick Start
 
@@ -104,6 +110,14 @@ curl http://localhost:8080/api/v1/stats
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
 | `SIGNING_SECRET` | `hookforge-dev-secret` | Fallback HMAC signing key |
 | `WORKER_COUNT` | `5` | Number of concurrent delivery goroutines |
+| `ADMIN_API_KEY` | (empty) | API key for admin endpoints (empty = no auth) |
+| `ALLOWED_ORIGINS` | (empty) | CORS allowed origins (comma-separated, `*` for all) |
+| `MAX_BODY_BYTES` | `1048576` | Maximum request body size in bytes (1MB) |
+| `SMTP_HOST` | (empty) | SMTP server for email alerts |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_USER` | (empty) | SMTP username |
+| `SMTP_PASSWORD` | (empty) | SMTP password |
+| `SMTP_FROM` | `hookforge@localhost` | From address for alert emails |
 
 ## Benchmarks
 
@@ -128,6 +142,8 @@ Expected results on a single node (2 CPU, 4GB RAM):
 
 ## Self-Hosting
 
+### Docker Compose (single VM)
+
 Deploy on a €4/mo Hetzner CX22 VPS:
 
 ```bash
@@ -139,6 +155,18 @@ git clone https://github.com/prateekkhurmi/hookforge
 cd hookforge
 docker-compose -f docker-compose.prod.yml up -d
 ```
+
+### Kubernetes (Helm)
+
+```bash
+helm upgrade --install hookforge ./deploy/helm/hookforge \
+  --set config.signingSecret="your-secret" \
+  --set postgresql.password="your-db-pass" \
+  --set ingress.enabled=true \
+  --set ingress.host="hookforge.yourdomain.com"
+```
+
+Requires Postgres and Redis running in-cluster or externally (set via `postgresql.*` and `redis.*` values).
 
 Caddyfile (`/etc/caddy/Caddyfile`):
 

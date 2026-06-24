@@ -40,6 +40,8 @@ services:
       REDIS_URL: "redis://redis:6379/0"
       SIGNING_SECRET: ${SIGNING_SECRET:?SIGNING_SECRET is required}
       WORKER_COUNT: ${WORKER_COUNT:-5}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-}
+      MAX_BODY_BYTES: "1048576"
     depends_on:
       postgres:
         condition: service_healthy
@@ -48,6 +50,14 @@ services:
     restart: always
     networks:
       - internal
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "256M"
+        reservations:
+          cpus: "0.1"
+          memory: "128M"
 
   caddy:
     image: caddy:2-alpine

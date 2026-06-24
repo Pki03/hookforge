@@ -1,0 +1,59 @@
+replicaCount: 2
+
+image:
+  repository: ghcr.io/pki03/hookforge
+  tag: latest
+  pullPolicy: IfNotPresent
+
+config:
+  port: "8080"
+  workerCount: 5
+  signingSecret: "hookforge-prod-secret-change-me"
+  adminApiKey: ""
+  allowedOrigins: ""
+  maxBodyBytes: "1048576"
+  smtpHost: ""
+  smtpPort: "587"
+  smtpUser: ""
+  smtpPassword: ""
+  smtpFrom: "hookforge@example.com"
+
+postgresql:
+  host: "hookforge-postgres"
+  port: "5432"
+  database: "hookforge"
+  user: "postgres"
+  password: "change-me"
+
+redis:
+  host: "hookforge-redis-master"
+  port: "6379"
+  password: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+hpa:
+  maxReplicas: 10
+  cpuTargetPercent: 70
+
+ingress:
+  enabled: false
+  className: ""
+  host: hookforge.example.com
+  tls:
+    enabled: false
+    secretName: ""
+
+resources:
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

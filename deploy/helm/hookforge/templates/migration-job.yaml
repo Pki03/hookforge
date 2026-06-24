@@ -1,0 +1,21 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "hookforge.fullname" . }}-migrate
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          command: ["/app/migrate"]
+          envFrom:
+            - configMapRef:
+                name: {{ include "hookforge.fullname" . }}-config
+            - secretRef:
+                name: {{ include "hookforge.fullname" . }}-secret

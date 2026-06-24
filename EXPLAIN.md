@@ -198,7 +198,102 @@ Webhooks are inherently at-least-once. We deduplicate via `X-HookForge-Event-ID`
 
 ---
 
-## 12. Resume Bullet Points
+## 12. Event Types / Webhook Filtering
+
+**What:** Each event can carry an `event_type` (e.g. `user.created`, `order.paid`). Each endpoint can whitelist which event types it accepts.
+
+**How:**
+- Migration 004 adds `event_type TEXT` to `events` and `allowed_event_types TEXT` (comma-separated) to `endpoints`.
+- POST `/api/v1/events` validates the `event_type` against the endpoint's whitelist and returns 422 if not allowed.
+- `allowed_event_types = ""` means accept all (backward compatible).
+
+**Why TEXT instead of JSONB or a join table?** Simplicity. For SDE-1 scale (thousands of events, not millions), comma-separated TEXT is easy to read, query, and migrate. A join table would be the right choice at scale (normalized, indexable, supports many-to-many).
+
+---
+
+## 13. Email Failure Alerts
+
+**What:** Sends SMTP email when an event hits the dead letter queue.
+
+**How:**
+- Migration 005 adds `email TEXT` column to `endpoints`.
+- `notifier.SendEmailAlert()` uses `net/smtp.SendMail` with `smtp.PlainAuth`.
+- Configured via env vars: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`.
+- Runs alongside the Slack webhook notifier — both fire on DLQ events.
+
+**Why SMTP directly instead of a third-party API (SendGrid, SES)?** Zero external dependencies for self-hosters. The tradeoff is SMTP can be blocked by some providers. For production, you'd configure a transactional email service and swap the `SendEmailAlert` implementation behind the same interface.
+
+---
+
+## 14. Helm Chart / Kubernetes Deploy
+
+**What:** Complete Helm chart at `deploy/helm/hookforge/` for production Kubernetes deployment.
+
+**Contents:**
+- **Deployment:** Stateless app pods with liveness/readiness probes
+- **Service:** ClusterIP exposing port 8080
+- **ConfigMap:** Environment variables (DATABASE_URL, REDIS_URL, WORKER_COUNT, SMTP_HOST, etc.)
+- **Secret:** SIGNING_SECRET, SMTP_PASSWORD
+- **Ingress:** Optional, with TLS support
+- **Migration Job:** Post-install/post-upgrade hook that runs the `/app/migrate` binary
+
+**Why a separate migration binary?** Helm hooks guarantee migrations run before app pods scale up. The app also runs migrations on startup as a safety net, but the Job ensures they complete before the Deployment rolls out.
+
+---
+
+## 15. Production Hardening
+
+### 15a. Admin Auth (Middleware)
+
+**What:** Optional `X-API-Key` header check applied to all `/api/v1/` endpoints.
+
+**How:** `middleware.AdminAuth(apiKey)` — if `ADMIN_API_KEY` is empty, pass-through (dev mode). If set, rejects missing/invalid keys with 401/403. Applied at the group level in the router.
+
+**Why optional?** Zero-friction local development. In production you set the env var and all endpoints are protected. The dashboard UI (`/dashboard`) is served outside the auth group intentionally — in production you'd put an auth proxy (OAuth2 Proxy, Authelia) in front of everything.
+
+### 15b. CORS + Security Headers
+
+**What:** `middleware.CORS()` and `middleware.SecurityHeaders()` applied globally.
+
+**Headers set:** `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Cross-Origin-Embedder-Policy`.
+
+**CORS:** Respects `ALLOWED_ORIGINS` env var. Preflight (`OPTIONS`) handled automatically with 204 and proper headers.
+
+### 15c. SSRF Protection
+
+**What:** Prevents the worker from delivering to internal/private IPs.
+
+**How:** `worker.ssrfCheck()` resolves the target hostname and blocks loopback (`127.0.0.1`, `::1`), private (`10.x`, `172.16-31.x`, `192.168.x`), and link-local (`169.254.x`) addresses. Runs before every delivery attempt in the worker.
+
+**Tradeoff:** Adds a DNS lookup per delivery. DNS is cached by the OS resolver (default TTL). For high-throughput, consider a DNS cache layer or an IP allowlist for environments that require internal delivery.
+
+### 15d. Request Body Size Limit
+
+**What:** `middleware.BodySizeLimit(maxBytes)` caps incoming request bodies.
+
+**Why:** Prevents OOM attacks and accidental large payload ingestion. Default 1MB, configurable via `MAX_BODY_BYTES`.
+
+### 15e. Non-Root Container
+
+**What:** Dockerfile creates a `hookforge` user and runs the binary as non-root.
+
+**How:** `adduser -S hookforge -G hookforge` → `USER hookforge`. Combined with Helm `readOnlyRootFilesystem: true`, `runAsNonRoot: true`, and `capabilities.drop: ["ALL"]`.
+
+### 15f. Separate /ready Endpoint
+
+**What:** `/ready` checks DB + Redis connectivity, unlike `/health` which only checks the app is running.
+
+**Why:** Kubernetes readiness probes routed to `/ready` prevent traffic being sent to pods that can't serve requests. The Helm chart uses `/health` for liveness and `/ready` for readiness.
+
+### 15g. Runbook
+
+**What:** `RUNBOOK.md` covers backup/restore, common issue diagnosis, restart procedures, and recovery steps.
+
+**Interview angle:** "I documented recovery scenarios because on-call engineers need clear procedures during incidents. A runbook reduces MTTR from hours to minutes."
+
+---
+
+## 16. Resume Bullet Points
 
 Copy-paste these into your resume:
 

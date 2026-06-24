@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/prateekkhurmi/hookforge/internal/circuitbreaker"
@@ -94,8 +96,19 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 			"url", endpoint.URL,
 		)
 		w.db.CreateAttempt(ctx, eventID, event.Attempts+1, nil, nil, strPtr("circuit breaker open — target marked as failing"), 0)
-		w.handleFailure(ctx, event, endpoint.SlackWebhookURL)
+		w.handleFailure(ctx, event, endpoint)
 		return fmt.Errorf("circuit breaker open for endpoint %s", endpoint.ID)
+	}
+
+	if err := ssrfCheck(endpoint.URL); err != nil {
+		slog.Warn("ssrf protection blocked delivery",
+			"event_id", shortID(eventID),
+			"endpoint_id", shortID(endpoint.ID),
+			"url", endpoint.URL,
+		)
+		w.db.CreateAttempt(ctx, eventID, event.Attempts+1, nil, nil, strPtr("ssrf block: "+err.Error()), 0)
+		w.handleFailure(ctx, event, endpoint)
+		return fmt.Errorf("ssrf check failed for %s: %w", endpoint.URL, err)
 	}
 
 	secret := endpoint.Secret
@@ -124,7 +137,7 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 		metrics.EventsTotal.WithLabelValues("failed").Inc()
 		breaker.Failure()
 		w.db.CreateAttempt(ctx, eventID, event.Attempts+1, nil, nil, strPtr(err.Error()), durationMs)
-		w.handleFailure(ctx, event, endpoint.SlackWebhookURL)
+		w.handleFailure(ctx, event, endpoint)
 		return fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
@@ -153,11 +166,11 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 	breaker.Failure()
 	statusCode := resp.StatusCode
 	w.db.CreateAttempt(ctx, eventID, event.Attempts+1, &statusCode, nil, strPtr(fmt.Sprintf("bad status %d from target", statusCode)), durationMs)
-	w.handleFailure(ctx, event, endpoint.SlackWebhookURL)
+	w.handleFailure(ctx, event, endpoint)
 	return fmt.Errorf("bad status %d from %s", statusCode, endpoint.URL)
 }
 
-func (w *Worker) handleFailure(ctx context.Context, event *database.Event, slackWebhook string) {
+func (w *Worker) handleFailure(ctx context.Context, event *database.Event, endpoint *database.Endpoint) {
 	event.Attempts++
 
 	backoff := calculateBackoff(event.Attempts)
@@ -172,9 +185,9 @@ func (w *Worker) handleFailure(ctx context.Context, event *database.Event, slack
 			"attempts", event.Attempts,
 			"max_retries", event.MaxRetries,
 		)
-		if slackWebhook != "" {
-			notifier.SendSlackAlert(slackWebhook, event.ID, event.EndpointID, "dead", event.Attempts, event.MaxRetries)
-		}
+		notifier.SendSlackAlert(endpoint.SlackWebhookURL, event.ID, event.EndpointID, "dead", event.Attempts, event.MaxRetries)
+		emailCfg := w.cfg.EmailConfig()
+		notifier.SendEmailAlert(emailCfg, endpoint.Email, event.ID, event.EndpointID, "dead", event.Attempts, event.MaxRetries)
 		return
 	}
 
@@ -250,4 +263,25 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+func ssrfCheck(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid url: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("unsupported scheme %s", u.Scheme)
+	}
+	host := u.Hostname()
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return nil
+	}
+	for _, ip := range ips {
+		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+			return fmt.Errorf("blocked private/loopback IP %s for host %s", ip, host)
+		}
+	}
+	return nil
 }

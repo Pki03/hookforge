@@ -7,6 +7,8 @@ type Endpoint struct {
 	URL                string    `json:"url"`
 	Secret             string    `json:"-"`
 	SlackWebhookURL    string    `json:"-"`
+	Email              string    `json:"-"`
+	AllowedEventTypes  []string  `json:"-"`
 	RateLimitPerSecond int       `json:"rate_limit_per_second"`
 	RateLimitBurst     int       `json:"rate_limit_burst"`
 	CreatedAt          time.Time `json:"created_at"`
@@ -17,6 +19,7 @@ type EndpointResponse struct {
 	ID                 string    `json:"id"`
 	URL                string    `json:"url"`
 	Secret             string    `json:"secret,omitempty"`
+	AllowedEventTypes  []string  `json:"allowed_event_types,omitempty"`
 	RateLimitPerSecond int       `json:"rate_limit_per_second"`
 	RateLimitBurst     int       `json:"rate_limit_burst"`
 	CreatedAt          time.Time `json:"created_at"`
@@ -37,6 +40,7 @@ type DeliveryAttempt struct {
 type Event struct {
 	ID          string     `json:"id"`
 	EndpointID  string     `json:"endpoint_id"`
+	EventType   string     `json:"event_type,omitempty"`
 	Payload     []byte     `json:"payload"`
 	Status      string     `json:"status"`
 	Attempts    int        `json:"attempts"`

@@ -19,7 +19,14 @@ import (
 
 func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler {
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
+
+	r.Use(
+		gin.Logger(),
+		gin.Recovery(),
+		middleware.SecurityHeaders(),
+		middleware.CORS(cfg.AllowedOrigins),
+		middleware.BodySizeLimit(cfg.MaxBodyBytes),
+	)
 
 	r.SetFuncMap(template.FuncMap{
 		"shortID": func(s string) string {
@@ -48,7 +55,25 @@ func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler 
 	r.LoadHTMLGlob("templates/*.html")
 
 	r.GET("/health", func(c *gin.Context) {
+		if err := db.Ping(c.Request.Context()); err != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unhealthy", "error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	r.GET("/ready", func(c *gin.Context) {
+		dbErr := db.Ping(c.Request.Context())
+		redisErr := rdb.Ping(c.Request.Context())
+		if dbErr != nil || redisErr != nil {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status":  "unhealthy",
+				"db":      dbErr == nil,
+				"redis":   redisErr == nil,
+			})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "db": true, "redis": true})
 	})
 
 	ep := handler.NewEndpointHandler(db)
@@ -57,7 +82,7 @@ func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler 
 
 	rl := ratelimit.New(rdb)
 
-	api := r.Group("/api/v1")
+	api := r.Group("/api/v1", middleware.AdminAuth(cfg.AdminAPIKey))
 	{
 		api.GET("/endpoints", ep.List)
 		api.POST("/endpoints", ep.Create)
@@ -81,7 +106,7 @@ func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler 
 	r.GET("/api/v1/dashboard/stats", dh.StatsPanel)
 	r.GET("/api/v1/dashboard/events", dh.EventsPanel)
 
-	ws := dashboard.NewWSHandler(db)
+	ws := dashboard.NewWSHandler(db, cfg.AllowedOrigins)
 	r.GET("/api/v1/ws", gin.WrapH(http.HandlerFunc(ws.Serve)))
 	r.GET("/dashboard/events/:id", dh.EventDetail)
 

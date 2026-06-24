@@ -24,6 +24,10 @@ func Connect(databaseURL string) (*DB, error) {
 	return &DB{Pool: pool}, nil
 }
 
+func (db *DB) Ping(ctx context.Context) error {
+	return db.Pool.Ping(ctx)
+}
+
 func (db *DB) Close() {
 	db.Pool.Close()
 }

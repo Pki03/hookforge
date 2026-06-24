@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "hookforge.fullname" . }}-config
+  labels:
+    {{- include "hookforge.labels" . | nindent 4 }}
+data:
+  PORT: "{{ .Values.config.port }}"
+  WORKER_COUNT: "{{ .Values.config.workerCount }}"
+  DATABASE_URL: "postgres://{{ .Values.postgresql.user }}:{{ .Values.postgresql.password }}@{{ .Values.postgresql.host }}:{{ .Values.postgresql.port }}/{{ .Values.postgresql.database }}?sslmode=disable"
+  REDIS_URL: "redis://{{ if .Values.redis.password }}:{{ .Values.redis.password }}@{{ end }}{{ .Values.redis.host }}:{{ .Values.redis.port }}/0"
+  SMTP_HOST: "{{ .Values.config.smtpHost }}"
+  SMTP_PORT: "{{ .Values.config.smtpPort }}"
+  SMTP_USER: "{{ .Values.config.smtpUser }}"
+  SMTP_FROM: "{{ .Values.config.smtpFrom }}"
+  ALLOWED_ORIGINS: "{{ .Values.config.allowedOrigins }}"
+  MAX_BODY_BYTES: "{{ .Values.config.maxBodyBytes }}"

@@ -5,18 +5,40 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
 
-var endpointColumns = `id, url, secret, slack_webhook_url, rate_limit_per_second, rate_limit_burst, created_at, updated_at`
+var endpointColumns = `id, url, secret, slack_webhook_url, email, allowed_event_types, rate_limit_per_second, rate_limit_burst, created_at, updated_at`
+
+func parseAllowedEventTypes(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	var result []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+func joinAllowedEventTypes(types []string) string {
+	return strings.Join(types, ",")
+}
 
 func scanEndpoint(row pgx.Row) (*Endpoint, error) {
+	var allowedStr string
 	e := &Endpoint{}
-	err := row.Scan(&e.ID, &e.URL, &e.Secret, &e.SlackWebhookURL, &e.RateLimitPerSecond, &e.RateLimitBurst, &e.CreatedAt, &e.UpdatedAt)
+	err := row.Scan(&e.ID, &e.URL, &e.Secret, &e.SlackWebhookURL, &e.Email, &allowedStr, &e.RateLimitPerSecond, &e.RateLimitBurst, &e.CreatedAt, &e.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
+	e.AllowedEventTypes = parseAllowedEventTypes(allowedStr)
 	return e, nil
 }
 
@@ -26,17 +48,19 @@ func generateSecret() string {
 	return hex.EncodeToString(b)
 }
 
-func (db *DB) CreateEndpoint(ctx context.Context, url string, slackWebhookURL string) (*Endpoint, string, error) {
+func (db *DB) CreateEndpoint(ctx context.Context, url string, slackWebhookURL string, email string, allowedEventTypes []string) (*Endpoint, string, error) {
 	secret := generateSecret()
+	allowedStr := joinAllowedEventTypes(allowedEventTypes)
 	e := &Endpoint{}
 	err := db.Pool.QueryRow(ctx,
-		`INSERT INTO endpoints (url, secret, slack_webhook_url) VALUES ($1, $2, $3)
+		`INSERT INTO endpoints (url, secret, slack_webhook_url, email, allowed_event_types) VALUES ($1, $2, $3, $4, $5)
 		 RETURNING `+endpointColumns,
-		url, secret, slackWebhookURL,
-	).Scan(&e.ID, &e.URL, &e.Secret, &e.SlackWebhookURL, &e.RateLimitPerSecond, &e.RateLimitBurst, &e.CreatedAt, &e.UpdatedAt)
+		url, secret, slackWebhookURL, email, allowedStr,
+	).Scan(&e.ID, &e.URL, &e.Secret, &e.SlackWebhookURL, &e.Email, &allowedStr, &e.RateLimitPerSecond, &e.RateLimitBurst, &e.CreatedAt, &e.UpdatedAt)
 	if err != nil {
 		return nil, "", fmt.Errorf("creating endpoint: %w", err)
 	}
+	e.AllowedEventTypes = parseAllowedEventTypes(allowedStr)
 	return e, secret, nil
 }
 
@@ -68,8 +92,7 @@ func (db *DB) GetEndpointURL(ctx context.Context, id string) (string, error) {
 
 func (db *DB) ListEndpoints(ctx context.Context) ([]Endpoint, error) {
 	rows, err := db.Pool.Query(ctx,
-		`SELECT id, url, '' as secret, '' as slack_webhook_url, rate_limit_per_second, rate_limit_burst, created_at, updated_at
-		 FROM endpoints ORDER BY created_at DESC`,
+		`SELECT `+endpointColumns+` FROM endpoints ORDER BY created_at DESC`,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("listing endpoints: %w", err)
@@ -78,11 +101,11 @@ func (db *DB) ListEndpoints(ctx context.Context) ([]Endpoint, error) {
 
 	var endpoints []Endpoint
 	for rows.Next() {
-		var e Endpoint
-		if err := rows.Scan(&e.ID, &e.URL, &e.Secret, &e.SlackWebhookURL, &e.RateLimitPerSecond, &e.RateLimitBurst, &e.CreatedAt, &e.UpdatedAt); err != nil {
+		e, err := scanEndpoint(rows)
+		if err != nil {
 			return nil, fmt.Errorf("scanning endpoint: %w", err)
 		}
-		endpoints = append(endpoints, e)
+		endpoints = append(endpoints, *e)
 	}
 	return endpoints, nil
 }

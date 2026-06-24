@@ -1,18 +1,21 @@
 # HookForge — Remaining Features
 
-Items from original roadmap not yet implemented:
+All original roadmap items have been implemented:
 
-1. **Webhook filtering / event types**
-   - Add `event_type` field to events
-   - Allow endpoints to filter by accepted event types
-   - Reject events with unaccepted types at ingestion
+1. ~~**Webhook filtering / event types**~~ ✅
+   - Migration 004: event_type on events, allowed_event_types on endpoints
+   - Validates event_type against endpoint whitelist at ingestion (422 if rejected)
 
-2. **Email failure alerts**
-   - SMTP-based email notifications when events hit dead letter queue
-   - Configurable via env vars (SMTP_HOST, SMTP_PORT, etc.)
-   - Works alongside existing Slack alerts
+2. ~~**Email failure alerts**~~ ✅
+   - Migration 005: email column on endpoints
+   - SMTP notifier alongside existing Slack alerts
+   - Configurable via env vars (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM)
 
-3. **Helm chart for Kubernetes deploy**
-   - Helm chart with Deployment, Service, ConfigMap, Secrets
-   - Postgres + Redis as sub-charts or external dependencies
-   - Ingress + TLS support
+3. ~~**Helm chart for Kubernetes deploy**~~ ✅
+   - `deploy/helm/hookforge/` — Deployment, Service, ConfigMap, Secrets, Ingress, migration Job
+   - Separate `/app/migrate` binary in Docker image for migration job
+
+## Next if desired:
+- Webhook replay endpoint (POST /api/v1/events/:id/replay)
+- Batch event ingestion (POST /api/v1/events/batch)
+- Admin API key auth via header
