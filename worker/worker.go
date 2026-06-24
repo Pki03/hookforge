@@ -8,10 +8,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/prateekkhurmi/hookforge/internal/circuitbreaker"
 	"github.com/prateekkhurmi/hookforge/internal/config"
 	"github.com/prateekkhurmi/hookforge/internal/database"
 	"github.com/prateekkhurmi/hookforge/internal/metrics"
@@ -24,6 +25,7 @@ type Worker struct {
 	rdb    *redis.Client
 	cfg    *config.Config
 	client *http.Client
+	cb     *circuitbreaker.EndpointBreaker
 }
 
 func New(db *database.DB, rdb *redis.Client, cfg *config.Config) *Worker {
@@ -34,6 +36,11 @@ func New(db *database.DB, rdb *redis.Client, cfg *config.Config) *Worker {
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+		cb: circuitbreaker.NewEndpointBreaker(circuitbreaker.Config{
+			FailureThreshold: 5,
+			ResetTimeout:     30 * time.Second,
+			HalfOpenMaxReqs:  1,
+		}),
 	}
 }
 
@@ -42,14 +49,14 @@ func (w *Worker) Start(ctx context.Context) {
 		go w.deliveryLoop(ctx)
 	}
 	go w.retryLoop(ctx)
-	log.Printf("worker started (%d delivery goroutines)", w.cfg.WorkerCount)
+	slog.Info("worker started", "delivery_goroutines", w.cfg.WorkerCount)
 }
 
 func (w *Worker) deliveryLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("delivery loop stopped")
+			slog.Info("delivery loop stopped")
 			return
 		default:
 			eventID, err := w.rdb.DequeueEvent(ctx)
@@ -58,7 +65,7 @@ func (w *Worker) deliveryLoop(ctx context.Context) {
 				continue
 			}
 			if err := w.deliver(ctx, eventID); err != nil {
-				log.Printf("delivery failed for event %s: %v", eventID, err)
+				slog.Warn("delivery failed", "event_id", shortID(eventID), "error", err.Error())
 			}
 		}
 	}
@@ -76,6 +83,19 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 	}
 	if endpoint == nil {
 		return fmt.Errorf("endpoint %s not found", event.EndpointID)
+	}
+
+	breaker := w.cb.Get(event.EndpointID)
+	if !breaker.Allow() {
+		metrics.CircuitBreakerTrips.WithLabelValues(endpoint.ID).Inc()
+		slog.Warn("circuit breaker open, skipping delivery",
+			"event_id", shortID(eventID),
+			"endpoint_id", shortID(endpoint.ID),
+			"url", endpoint.URL,
+		)
+		w.db.CreateAttempt(ctx, eventID, event.Attempts+1, nil, nil, strPtr("circuit breaker open — target marked as failing"), 0)
+		w.handleFailure(ctx, event, endpoint.SlackWebhookURL)
+		return fmt.Errorf("circuit breaker open for endpoint %s", endpoint.ID)
 	}
 
 	secret := endpoint.Secret
@@ -102,6 +122,7 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 
 	if err != nil {
 		metrics.EventsTotal.WithLabelValues("failed").Inc()
+		breaker.Failure()
 		w.db.CreateAttempt(ctx, eventID, event.Attempts+1, nil, nil, strPtr(err.Error()), durationMs)
 		w.handleFailure(ctx, event, endpoint.SlackWebhookURL)
 		return fmt.Errorf("request failed: %w", err)
@@ -114,15 +135,22 @@ func (w *Worker) deliver(ctx context.Context, eventID string) error {
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		metrics.EventsTotal.WithLabelValues("delivered").Inc()
 		metrics.DeliveryLatency.Observe(time.Since(start).Seconds())
+		breaker.Success()
 		if err := w.db.UpdateEventStatus(ctx, eventID, "delivered"); err != nil {
 			return fmt.Errorf("update status: %w", err)
 		}
 		w.db.CreateAttempt(ctx, eventID, event.Attempts+1, &resp.StatusCode, &bodyStr, nil, durationMs)
-		log.Printf("delivered event %s to %s (status=%d, latency=%dms)", eventID, endpoint.URL, resp.StatusCode, durationMs)
+		slog.Info("delivered",
+			"event_id", shortID(eventID),
+			"endpoint_id", shortID(endpoint.ID),
+			"status", resp.StatusCode,
+			"latency_ms", durationMs,
+		)
 		return nil
 	}
 
 	metrics.EventsTotal.WithLabelValues("failed").Inc()
+	breaker.Failure()
 	statusCode := resp.StatusCode
 	w.db.CreateAttempt(ctx, eventID, event.Attempts+1, &statusCode, nil, strPtr(fmt.Sprintf("bad status %d from target", statusCode)), durationMs)
 	w.handleFailure(ctx, event, endpoint.SlackWebhookURL)
@@ -138,7 +166,12 @@ func (w *Worker) handleFailure(ctx context.Context, event *database.Event, slack
 	if event.Attempts >= event.MaxRetries {
 		metrics.EventsTotal.WithLabelValues("dead").Inc()
 		w.db.UpdateEventStatus(ctx, event.ID, "dead")
-		log.Printf("event %s → dead letter queue (%d/%d)", event.ID, event.Attempts, event.MaxRetries)
+		slog.Warn("event moved to dead letter queue",
+			"event_id", shortID(event.ID),
+			"endpoint_id", shortID(event.EndpointID),
+			"attempts", event.Attempts,
+			"max_retries", event.MaxRetries,
+		)
 		if slackWebhook != "" {
 			notifier.SendSlackAlert(slackWebhook, event.ID, event.EndpointID, "dead", event.Attempts, event.MaxRetries)
 		}
@@ -147,7 +180,13 @@ func (w *Worker) handleFailure(ctx context.Context, event *database.Event, slack
 
 	w.db.UpdateEventStatus(ctx, event.ID, "retrying")
 	w.db.IncrementAttempts(ctx, event.ID, &nextRetryAt)
-	log.Printf("event %s failed (attempt %d/%d), retrying in %v", event.ID, event.Attempts, event.MaxRetries, backoff)
+	slog.Info("scheduling retry",
+		"event_id", shortID(event.ID),
+		"endpoint_id", shortID(event.EndpointID),
+		"attempt", event.Attempts,
+		"max_retries", event.MaxRetries,
+		"backoff", backoff.String(),
+	)
 }
 
 func strPtr(s string) *string {
@@ -161,7 +200,7 @@ func (w *Worker) retryLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("retry loop stopped")
+			slog.Info("retry loop stopped")
 			return
 		case <-ticker.C:
 			w.processRetries(ctx)
@@ -172,7 +211,7 @@ func (w *Worker) retryLoop(ctx context.Context) {
 func (w *Worker) processRetries(ctx context.Context) {
 	events, err := w.db.ListEvents(ctx, "retrying", 100)
 	if err != nil {
-		log.Printf("list retry events error: %v", err)
+		slog.Error("list retry events", "error", err)
 		return
 	}
 
@@ -180,10 +219,10 @@ func (w *Worker) processRetries(ctx context.Context) {
 	for _, event := range events {
 		if event.NextRetryAt != nil && event.NextRetryAt.Before(now) {
 			if err := w.rdb.EnqueueEvent(ctx, event.ID); err != nil {
-				log.Printf("retry enqueue error for event %s: %v", event.ID, err)
+				slog.Error("retry enqueue", "event_id", shortID(event.ID), "error", err)
 				continue
 			}
-			log.Printf("re-enqueued event %s for retry", event.ID)
+			slog.Info("re-enqueued for retry", "event_id", shortID(event.ID))
 		}
 	}
 	metrics.RetryCount.Set(float64(len(events)))
@@ -204,4 +243,11 @@ func signPayload(payload []byte, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(payload)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8]
+	}
+	return id
 }

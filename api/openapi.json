@@ -1,0 +1,351 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "HookForge API",
+    "description": "Self-hosted webhook delivery engine. Reliable, observable, free.",
+    "version": "1.0.0",
+    "contact": {
+      "name": "Prateek Khurmi",
+      "url": "https://github.com/Pki03/hookforge"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local development"
+    }
+  ],
+  "paths": {
+    "/api/v1/endpoints": {
+      "get": {
+        "summary": "List all endpoints",
+        "tags": ["Endpoints"],
+        "responses": {
+          "200": {
+            "description": "An array of endpoints",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Endpoint" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Create an endpoint",
+        "tags": ["Endpoints"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateEndpointRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Endpoint created with HMAC secret (returned once)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EndpointWithSecret" }
+              }
+            }
+          },
+          "400": { "description": "Invalid request body" }
+        }
+      }
+    },
+    "/api/v1/endpoints/{id}": {
+      "get": {
+        "summary": "Get endpoint details",
+        "tags": ["Endpoints"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Endpoint details (secret omitted)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Endpoint" }
+              }
+            }
+          },
+          "404": { "description": "Endpoint not found" }
+        }
+      }
+    },
+    "/api/v1/endpoints/{id}/rotate-secret": {
+      "post": {
+        "summary": "Rotate HMAC signing secret",
+        "tags": ["Endpoints"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "New secret returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "secret": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events": {
+      "post": {
+        "summary": "Create and enqueue an event",
+        "tags": ["Events"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateEventRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Event created and queued for delivery",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Event" }
+              }
+            }
+          },
+          "404": { "description": "Endpoint not found" },
+          "429": { "description": "Rate limit exceeded" }
+        }
+      },
+      "get": {
+        "summary": "List events",
+        "tags": ["Events"],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": ["pending", "delivered", "failed", "dead", "retrying"]
+            },
+            "description": "Filter by status"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "An array of events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Event" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/{id}": {
+      "get": {
+        "summary": "Get event detail with delivery attempts",
+        "tags": ["Events"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event with delivery attempt log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "event": { "$ref": "#/components/schemas/Event" },
+                    "attempts": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/DeliveryAttempt" }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "Event not found" }
+        }
+      }
+    },
+    "/api/v1/events/{id}/replay": {
+      "post": {
+        "summary": "Re-enqueue a dead-letter event for retry",
+        "tags": ["Events"],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event re-enqueued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": { "type": "string" },
+                    "id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stats": {
+      "get": {
+        "summary": "Aggregated delivery statistics",
+        "tags": ["Monitoring"],
+        "responses": {
+          "200": {
+            "description": "Delivery stats",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Stats" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "tags": ["Monitoring"],
+        "responses": {
+          "200": {
+            "description": "Service is healthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus metrics",
+        "tags": ["Monitoring"],
+        "responses": {
+          "200": { "description": "Prometheus text format metrics" }
+        }
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "summary": "Real-time monitoring dashboard",
+        "tags": ["Dashboard"],
+        "responses": {
+          "200": { "description": "HTMX dashboard HTML page" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Endpoint": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "url": { "type": "string", "format": "uri" },
+          "rate_limit_per_second": { "type": "integer", "default": 10 },
+          "rate_limit_burst": { "type": "integer", "default": 20 },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "EndpointWithSecret": {
+        "allOf": [
+          { "$ref": "#/components/schemas/Endpoint" },
+          {
+            "type": "object",
+            "properties": {
+              "secret": { "type": "string", "description": "HMAC signing secret (only on create)" }
+            }
+          }
+        ]
+      },
+      "CreateEndpointRequest": {
+        "type": "object",
+        "required": ["url"],
+        "properties": {
+          "url": { "type": "string", "format": "uri" },
+          "slack_webhook_url": { "type": "string", "format": "uri", "description": "Slack webhook for failure alerts" }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "endpoint_id": { "type": "string", "format": "uuid" },
+          "payload": { "type": "object" },
+          "status": { "type": "string", "enum": ["pending", "delivered", "failed", "dead", "retrying"] },
+          "attempts": { "type": "integer" },
+          "max_retries": { "type": "integer", "default": 5 },
+          "next_retry_at": { "type": "string", "format": "date-time", "nullable": true },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateEventRequest": {
+        "type": "object",
+        "required": ["endpoint_id", "payload"],
+        "properties": {
+          "endpoint_id": { "type": "string", "format": "uuid" },
+          "payload": { "type": "object" }
+        }
+      },
+      "DeliveryAttempt": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "event_id": { "type": "string", "format": "uuid" },
+          "attempt_num": { "type": "integer" },
+          "status_code": { "type": "integer", "nullable": true },
+          "response_body": { "type": "string", "nullable": true },
+          "error_message": { "type": "string", "nullable": true },
+          "duration_ms": { "type": "integer" },
+          "attempted_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Stats": {
+        "type": "object",
+        "properties": {
+          "total_sent": { "type": "integer" },
+          "delivered": { "type": "integer" },
+          "failed": { "type": "integer" },
+          "dead": { "type": "integer" },
+          "pending": { "type": "integer" },
+          "delivery_rate_percent": { "type": "number", "format": "float" },
+          "avg_latency_ms": { "type": "number", "format": "float" }
+        }
+      }
+    }
+  }
+}

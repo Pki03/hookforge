@@ -26,4 +26,9 @@ var (
 		Name: "hookforge_delivery_attempts_total",
 		Help: "Total number of delivery attempts",
 	})
+
+	CircuitBreakerTrips = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "hookforge_circuit_breaker_trips_total",
+		Help: "Total number of times circuit breaker opened per endpoint",
+	}, []string{"endpoint_id"})
 )

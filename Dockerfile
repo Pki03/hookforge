@@ -12,5 +12,6 @@ WORKDIR /app
 COPY --from=builder /hookforge /usr/local/bin/hookforge
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/db ./db
+COPY --from=builder /app/api ./api
 EXPOSE 8080
 CMD ["hookforge"]

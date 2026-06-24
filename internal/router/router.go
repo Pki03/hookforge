@@ -87,5 +87,10 @@ func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler 
 
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 
+	r.StaticFile("/api/v1/openapi.json", "api/openapi.json")
+	r.GET("/api/docs", func(c *gin.Context) {
+		c.HTML(http.StatusOK, "swagger.html", nil)
+	})
+
 	return r
 }

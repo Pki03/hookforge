@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -25,9 +25,9 @@ func SendSlackAlert(webhookURL, eventID, endpointID, status string, attempts, ma
 
 	resp, err := http.Post(webhookURL, "application/json", bytes.NewReader(body))
 	if err != nil {
-		log.Printf("slack notify error: %v", err)
+		slog.Error("slack notify error", "error", err)
 		return
 	}
 	resp.Body.Close()
-	log.Printf("slack alert sent for event %s", eventID)
+	slog.Info("slack alert sent", "event_id", eventID[:min(len(eventID), 8)])
 }
