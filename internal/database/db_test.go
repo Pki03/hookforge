@@ -21,10 +21,11 @@ import (
 var testDB *DB
 var testRDB *goredis.Client
 
-func TestMain(m *testing.M) {
-	ctx := context.Background()
-
-	pgContainer, err := postgres.Run(ctx,
+func connectPostgres(ctx context.Context, dsn string) (string, error) {
+	if dsn != "" {
+		return dsn, nil
+	}
+	c, err := postgres.Run(ctx,
 		"postgres:16-alpine",
 		postgres.WithDatabase("hookforge_test"),
 		postgres.WithUsername("test"),
@@ -35,50 +36,70 @@ func TestMain(m *testing.M) {
 		),
 	)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start postgres container: %v\n", err)
-		os.Exit(1)
+		return "", fmt.Errorf("start postgres container: %w", err)
 	}
-
-	pgURL, err := pgContainer.ConnectionString(ctx, "sslmode=disable")
+	url, err := c.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get pg url: %v\n", err)
+		return "", fmt.Errorf("pg connection string: %w", err)
+	}
+	return url, nil
+}
+
+func connectRedis(ctx context.Context, url string) (string, error) {
+	if url != "" {
+		return url, nil
+	}
+	c, err := tcRedis.Run(ctx, "redis:7-alpine")
+	if err != nil {
+		return "", fmt.Errorf("start redis container: %w", err)
+	}
+	return c.ConnectionString(ctx)
+}
+
+func runMigrations(dsn string) error {
+	m, err := migrate.New("file://../../db/migrations", dsn)
+	if err != nil {
+		return fmt.Errorf("migration init: %w", err)
+	}
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("migration up: %w", err)
+	}
+	return nil
+}
+
+func TestMain(m *testing.M) {
+	ctx := context.Background()
+
+	pgURL := os.Getenv("DATABASE_URL")
+	redisURL := os.Getenv("REDIS_URL")
+
+	pgURL, err := connectPostgres(ctx, pgURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "postgres setup: %v\n", err)
 		os.Exit(1)
 	}
 
 	pool, err := pgxpool.New(ctx, pgURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to connect to pg: %v\n", err)
+		fmt.Fprintf(os.Stderr, "connect to pg: %v\n", err)
 		os.Exit(1)
 	}
 	testDB = &DB{Pool: pool}
 
-	mig, err := migrate.New("file://../../db/migrations", pgURL)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "migration init: %v\n", err)
-		os.Exit(1)
-	}
-	if err := mig.Up(); err != nil && err != migrate.ErrNoChange {
-		fmt.Fprintf(os.Stderr, "migration up: %v\n", err)
+	if err := runMigrations(pgURL); err != nil {
+		fmt.Fprintf(os.Stderr, "migrations: %v\n", err)
 		os.Exit(1)
 	}
 
-	redisContainer, err := tcRedis.Run(ctx,
-		"redis:7-alpine",
-	)
+	redisURL, err = connectRedis(ctx, redisURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to start redis container: %v\n", err)
-		os.Exit(1)
-	}
-
-	redisURL, err := redisContainer.ConnectionString(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to get redis url: %v\n", err)
+		fmt.Fprintf(os.Stderr, "redis setup: %v\n", err)
 		os.Exit(1)
 	}
 
 	opts, err := goredis.ParseURL(redisURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to parse redis url: %v\n", err)
+		fmt.Fprintf(os.Stderr, "parse redis url: %v\n", err)
 		os.Exit(1)
 	}
 	testRDB = goredis.NewClient(opts)
@@ -87,8 +108,6 @@ func TestMain(m *testing.M) {
 
 	pool.Close()
 	testRDB.Close()
-	pgContainer.Terminate(ctx)
-	redisContainer.Terminate(ctx)
 	os.Exit(code)
 }
 
