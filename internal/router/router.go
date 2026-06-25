@@ -64,7 +64,8 @@ func Setup(db *database.DB, rdb *redis.Client, cfg *config.Config) http.Handler 
 
 	r.GET("/ready", func(c *gin.Context) {
 		dbErr := db.Ping(c.Request.Context())
-		redisErr := rdb.Ping(c.Request.Context())
+		redisPing := rdb.Ping(c.Request.Context())
+		redisErr := redisPing.Err()
 		if dbErr != nil || redisErr != nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{
 				"status":  "unhealthy",
