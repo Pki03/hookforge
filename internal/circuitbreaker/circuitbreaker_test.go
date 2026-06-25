@@ -43,6 +43,9 @@ func TestHalfOpenAfterTimeout(t *testing.T) {
 	b := New(Config{FailureThreshold: 1, ResetTimeout: 50 * time.Millisecond})
 	b.Failure()
 	time.Sleep(100 * time.Millisecond)
+	if !b.Allow() {
+		t.Fatal("expected allow after timeout transitions to half-open")
+	}
 	if b.State() != StateHalfOpen {
 		t.Fatalf("expected half-open, got %s", b.State())
 	}
@@ -52,6 +55,7 @@ func TestSuccessClosesFromHalfOpen(t *testing.T) {
 	b := New(Config{FailureThreshold: 1, ResetTimeout: 50 * time.Millisecond})
 	b.Failure()
 	time.Sleep(100 * time.Millisecond)
+	b.Allow() // transitions to half-open
 	b.Success()
 	if b.State() != StateClosed {
 		t.Fatalf("expected closed, got %s", b.State())
@@ -62,6 +66,7 @@ func TestFailureReopensFromHalfOpen(t *testing.T) {
 	b := New(Config{FailureThreshold: 1, ResetTimeout: 50 * time.Millisecond})
 	b.Failure()
 	time.Sleep(100 * time.Millisecond)
+	b.Allow() // transitions to half-open
 	b.Failure()
 	if b.State() != StateOpen {
 		t.Fatalf("expected open, got %s", b.State())

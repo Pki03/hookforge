@@ -24,8 +24,8 @@ var testRDB *goredis.Client
 func TestMain(m *testing.M) {
 	ctx := context.Background()
 
-	pgContainer, err := postgres.RunContainer(ctx,
-		testcontainers.WithImage("postgres:16-alpine"),
+	pgContainer, err := postgres.Run(ctx,
+		"postgres:16-alpine",
 		postgres.WithDatabase("hookforge_test"),
 		postgres.WithUsername("test"),
 		postgres.WithPassword("test"),
@@ -62,8 +62,8 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
-	redisContainer, err := tcRedis.RunContainer(ctx,
-		testcontainers.WithImage("redis:7-alpine"),
+	redisContainer, err := tcRedis.Run(ctx,
+		"redis:7-alpine",
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to start redis container: %v\n", err)
