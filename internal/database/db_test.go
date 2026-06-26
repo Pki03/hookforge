@@ -115,7 +115,6 @@ func TestMain(m *testing.M) {
 }
 
 func TestCreateAndGetEvent(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
 
 	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/webhook", "", "", nil)
@@ -148,7 +147,6 @@ func TestCreateAndGetEvent(t *testing.T) {
 }
 
 func TestRetryAndDeadLetter(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
 
 	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/dlq-test", "", "", nil)
@@ -185,7 +183,6 @@ func TestRetryAndDeadLetter(t *testing.T) {
 }
 
 func TestDeliveryAttemptLog(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
 
 	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/attempt-test", "", "", nil)
@@ -223,7 +220,6 @@ func TestDeliveryAttemptLog(t *testing.T) {
 }
 
 func TestListEndpoints(t *testing.T) {
-	t.Parallel()
 	ctx := context.Background()
 
 	urls := []string{
