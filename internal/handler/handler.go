@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 
@@ -16,10 +17,10 @@ func validateTargetURL(rawURL string) error {
 		return err
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return err
+		return fmt.Errorf("unsupported scheme %s", u.Scheme)
 	}
 	if u.Host == "" {
-		return err
+		return fmt.Errorf("missing host")
 	}
 	return nil
 }
