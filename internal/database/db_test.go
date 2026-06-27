@@ -117,7 +117,7 @@ func TestMain(m *testing.M) {
 func TestCreateAndGetEvent(t *testing.T) {
 	ctx := context.Background()
 
-	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/webhook", "", "", nil)
+	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/webhook", "", "", nil, 10, 20)
 	if err != nil {
 		t.Fatalf("create endpoint: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestCreateAndGetEvent(t *testing.T) {
 func TestRetryAndDeadLetter(t *testing.T) {
 	ctx := context.Background()
 
-	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/dlq-test", "", "", nil)
+	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/dlq-test", "", "", nil, 10, 20)
 	if err != nil {
 		t.Fatalf("create endpoint: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestRetryAndDeadLetter(t *testing.T) {
 func TestDeliveryAttemptLog(t *testing.T) {
 	ctx := context.Background()
 
-	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/attempt-test", "", "", nil)
+	endpoint, _, err := testDB.CreateEndpoint(ctx, "https://example.com/attempt-test", "", "", nil, 10, 20)
 	if err != nil {
 		t.Fatalf("create endpoint: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestListEndpoints(t *testing.T) {
 		"https://third.example.com/webhook",
 	}
 	for _, url := range urls {
-		_, _, err := testDB.CreateEndpoint(ctx, url, "", "", nil)
+		_, _, err := testDB.CreateEndpoint(ctx, url, "", "", nil, 10, 20)
 		if err != nil {
 			t.Fatalf("create endpoint %s: %v", url, err)
 		}

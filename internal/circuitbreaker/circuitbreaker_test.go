@@ -1,7 +1,9 @@
 package circuitbreaker
 
 import (
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -113,4 +115,56 @@ func TestSuccessResetsFailureCount(t *testing.T) {
 	if b.State() != StateClosed {
 		t.Fatalf("expected closed after success resets count, got %s", b.State())
 	}
+}
+
+func TestChaosRapidCycleOpenClose(t *testing.T) {
+	b := New(Config{FailureThreshold: 2, ResetTimeout: 10 * time.Millisecond})
+	for range 100 {
+		b.Failure()
+		b.Failure()
+		if b.State() != StateOpen {
+			t.Fatal("expected open after 2 failures")
+		}
+		time.Sleep(15 * time.Millisecond)
+		b.Allow()
+		b.Success()
+		if b.State() != StateClosed {
+			t.Fatal("expected closed after success in half-open")
+		}
+	}
+}
+
+func TestChaosManyBreakersMemory(t *testing.T) {
+	eb := NewEndpointBreaker(Config{FailureThreshold: 5, ResetTimeout: time.Minute})
+	for range 1000 {
+		eb.Get(randomID())
+	}
+	if eb.Len() != 1000 {
+		t.Fatalf("expected 1000 breakers, got %d", eb.Len())
+	}
+}
+
+func TestChaosBreakerConcurrentThreshold(t *testing.T) {
+	b := New(Config{FailureThreshold: 3, ResetTimeout: time.Minute})
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 10 {
+				b.Failure()
+			}
+		}()
+	}
+	wg.Wait()
+	if b.State() != StateOpen {
+		t.Fatalf("expected open after concurrent failures, got %s", b.State())
+	}
+}
+
+var idCounter int64
+
+func randomID() string {
+	n := atomic.AddInt64(&idCounter, 1)
+	return fmt.Sprintf("ep-%d", n)
 }

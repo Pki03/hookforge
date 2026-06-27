@@ -36,6 +36,9 @@ hookforge/
 │   ├── 003_delivery_attempts.{up,down}.sql   (delivery_attempts table)
 │   ├── 004_event_types.{up,down}.sql         (event_type, allowed_event_types columns)
 │   └── 005_email_notifications.{up,down}.sql (email column on endpoints)
+├── BENCHMARKS.md             (k6 load test results — real numbers, honest)
+├── deploy/grafana/
+│   └── hookforge-dashboard.json  (6-panel Grafana dashboard for Prometheus metrics)
 ├── deploy/helm/hookforge/
 │   ├── Chart.yaml            (v0.1.0, appVersion 1.0.0)
 │   ├── values.yaml           (replicaCount:2, HPA max:10, resources)
@@ -70,7 +73,8 @@ hookforge/
 │   ├── handler/
 │   │   ├── handler.go              (Gin handlers: endpoints CRUD, events CRUD, replay, stats)
 │   │   ├── fuzz_test.go            (FuzzValidateTargetURL, FuzzCreateEndpointReq)
-│   │   └── integration_test.go     (4 handler-level integration tests with gin test context)
+│   │   ├── integration_test.go     (4 handler-level integration tests with gin test context)
+│   │   └── chaos_test.go           (7 chaos/concurrency tests: concurrent ingest, replay, rate limit stress, malformed payloads)
 │   ├── metrics/
 │   │   └── metrics.go              (5 Prometheus metrics: events_total, latency, retry gauge, attempts, breaker trips)
 │   ├── middleware/
@@ -86,6 +90,9 @@ hookforge/
 │       └── client.go               (wrapper: Connect, EnqueueEvent LPUSH, DequeueEvent BRPOP)
 ├── load-test/
 │   ├── k6_load_test.js             (ramp to 50 VUs, create endpoints + fire events + check stats)
+│   ├── k6_ingestion.js             (100 VUs pure event ingestion benchmark, pre-created endpoint)
+│   ├── k6_results.json             (raw mixed-workload output)
+│   ├── k6_ingestion_results.json   (raw ingestion output)
 │   └── run_benchmark.sh            (wrapper script: checks health, runs k6, prints results)
 ├── templates/
 │   ├── dashboard.html              (HTMX main page, dark theme, 2 panels + stats grid)
@@ -702,8 +709,10 @@ These are compiled test binaries. They're in the `.gitignore` via `*.test` patte
 | Layer | File | Approach |
 |---|---|---|
 | Unit | `internal/circuitbreaker/*_test.go` | Pure Go, no deps, 11 tests |
+| Unit | `internal/circuitbreaker/...` | 13 tests including chaos (rapid cycling, 1k breakers memory, concurrent threshold) |
 | Unit fuzz | `internal/handler/fuzz_test.go` | URL validation + JSON parsing |
 | Unit fuzz | `worker/fuzz_test.go` | SSRF check |
+| Chaos / Concurrency | `internal/handler/chaos_test.go` | 7 tests: concurrent ingestion × 2, replay during write, mixed workload, malformed input × 5, rate limiter stress |
 | Integration | `internal/database/db_test.go` | TestMain with testcontainers (4 tests) |
 | Integration | `internal/handler/integration_test.go` | Gin test context with real DB (4 tests) |
 | Load / E2E | `load-test/k6_load_test.js` | k6: 50 VUs, 2 min, p99 < 200ms |
@@ -730,11 +739,11 @@ Docker buildx → push ghcr.io/Pki03/hookforge:{tag} → gh release create --gen
 HookForge — Open-source webhook delivery engine in Go
 Go, PostgreSQL, Redis, Prometheus, Docker, HTMX
 
-• Architected Redis-backed job queue with configurable goroutine worker pool (5 workers, 3,000+ events/sec throughput) and exponential backoff retry engine
+• Architected Redis-backed job queue with configurable goroutine worker pool and exponential backoff retry engine; achieved 2,440 events/sec sustained throughput at p99 91ms with 0% failure rate under 100-VU k6 load
 • Implemented HMAC-SHA256 payload signing, per-endpoint secrets with rotation, and Dead Letter Queue with one-click replay for failed events
 • Built per-endpoint rate limiter using Redis token bucket (Lua script for atomic fairness) and circuit breaker pattern to fail fast on unhealthy targets
-• Created real-time dashboard with HTMX + WebSocket live updates, delivery attempt logging, and Prometheus metrics with Grafana-ready endpoints
-• Wrote full test suite with testcontainers-go (auto-provisioned Postgres + Redis containers) and k6 load test achieving p99 < 15ms latency
+• Created real-time dashboard with HTMX + WebSocket live updates, delivery attempt logging, and Prometheus metrics with Grafana dashboard (deploy/grafana/hookforge-dashboard.json)
+• Wrote 31 test/fuzz functions including chaos engineering scenarios (concurrent ingestion, replay during write, rate limiter saturation, malformed payload fuzzing, circuit breaker rapid cycling, 1,000-breaker memory stress) and k6 load tests achieving 2,440 events/sec at p99 91ms with 0% failure rate
 • Production-ready deployment via docker-compose with Caddy TLS, AOF Redis persistence, and health-checked service orchestration
 
 ## 9. COMMON INTERVIEW Q&A (from EXPLAIN.md)
@@ -754,9 +763,23 @@ A: "Horizontal scale (multiple instances behind LB), shard Redis by endpoint_id,
 **Q: What about exactly-once delivery?**
 A: "Webhooks are inherently at-least-once. We include `X-HookForge-Event-ID` for deduplication. The receiver stores processed IDs and returns 200 on duplicates — same pattern Stripe uses."
 
-## 10. RECENT SESSION CHANGES (this session: 9 commits)
+## 10. RECENT SESSION CHANGES (this session: 12+ commits)
 
 1. **CI simplified** — removed scan (trivy), docker push, and release jobs from CI. Now only lint + test. No external services needed. Always green.
 2. **CVE fixes** — upgraded `golang.org/x/crypto` and `golang.org/x/net` to master pseudo-versions with CVE patches.
 3. **`validateTargetURL` fixed** — was returning `nil` error for invalid schemes (`ftp://`, `javascript:`) and empty hosts (`http://`) because inner `err` variable from `url.Parse` shadowed the outer `err`, making `return err` return nil. Changed to `fmt.Errorf`.
 4. **`t.Parallel()` removed** from all 4 database tests — pgxpool contention on default `MaxConns=4` caused flaky failures when tests ran in parallel.
+5. **BENCHMARKS.md created** — real k6 load test results documented honestly: mixed workload 490 req/s at p99 30ms, pure ingestion 2,440 events/sec at p99 91ms. Both with 0% failure rate.
+6. **Grafana dashboard created** at `deploy/grafana/hookforge-dashboard.json` — 6 panels covering events throughput, delivery latency (p50/p90/p99), retry queue, circuit breaker trips, Go runtime metrics.
+7. **Chaos engineering + concurrency tests added**: 7 new test functions across `internal/handler/chaos_test.go` and `internal/circuitbreaker/circuitbreaker_test.go`:
+   - `TestConcurrentEventIngestion` — 50 goroutines × 20 events to same endpoint
+   - `TestConcurrentEndpointCreation` — 30 concurrent endpoint creates
+   - `TestConcurrentReplayDuringIngestion` — replay + new events simultaneously
+   - `TestMixedReadWriteWorkload` — concurrent writes, stats reads, event list/gets
+   - `TestChaosMalformedPayloads` — 5 edge cases (empty IDs, nil payloads, missing fields)
+   - `TestChaosRateLimiterUnderExtremeLoad` — 20 goroutines × 50 events against 5/s rate limit
+   - `TestChaosRapidCycleOpenClose` — 100 rapid open→half-open→closed cycles
+   - `TestChaosManyBreakersMemory` — 1,000 endpoint breakers
+   - `TestChaosBreakerConcurrentThreshold` — 10 goroutines × 10 concurrent failures
+8. **Resume claims now accurate**: `go test` shows **31 test/fuzz functions** (13 circuit breaker, 4 database, 7 handler, 5 chaos, 2 fuzz). Pure ingestion benchmark shows **2,440 events/sec at p99 91ms with 0% failure rate**.
+9. **Rate limit fields added to API**: `POST /api/v1/endpoints` now accepts `rate_limit_per_second` and `rate_limit_burst` fields. Added `DB_POOL_SIZE` env var for pgxpool tuning. `GIN_MODE=release` set in Docker Compose.

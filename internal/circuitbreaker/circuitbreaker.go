@@ -159,3 +159,9 @@ func (eb *EndpointBreaker) Reset(endpointID string) {
 	defer eb.mu.Unlock()
 	delete(eb.breakers, endpointID)
 }
+
+func (eb *EndpointBreaker) Len() int {
+	eb.mu.RLock()
+	defer eb.mu.RUnlock()
+	return len(eb.breakers)
+}

@@ -34,10 +34,12 @@ func NewEndpointHandler(db *database.DB) *EndpointHandler {
 }
 
 type createEndpointReq struct {
-	URL               string   `json:"url" binding:"required"`
-	SlackWebhookURL   string   `json:"slack_webhook_url"`
-	Email             string   `json:"email"`
-	AllowedEventTypes []string `json:"allowed_event_types"`
+	URL                string   `json:"url" binding:"required"`
+	SlackWebhookURL    string   `json:"slack_webhook_url"`
+	Email              string   `json:"email"`
+	AllowedEventTypes  []string `json:"allowed_event_types"`
+	RateLimitPerSecond int      `json:"rate_limit_per_second"`
+	RateLimitBurst     int      `json:"rate_limit_burst"`
 }
 
 func (h *EndpointHandler) Create(c *gin.Context) {
@@ -52,7 +54,15 @@ func (h *EndpointHandler) Create(c *gin.Context) {
 		return
 	}
 
-	endpoint, secret, err := h.db.CreateEndpoint(c.Request.Context(), req.URL, req.SlackWebhookURL, req.Email, req.AllowedEventTypes)
+	rps := req.RateLimitPerSecond
+	if rps <= 0 {
+		rps = 10
+	}
+	burst := req.RateLimitBurst
+	if burst <= 0 {
+		burst = 20
+	}
+	endpoint, secret, err := h.db.CreateEndpoint(c.Request.Context(), req.URL, req.SlackWebhookURL, req.Email, req.AllowedEventTypes, rps, burst)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

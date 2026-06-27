@@ -48,14 +48,14 @@ func generateSecret() string {
 	return hex.EncodeToString(b)
 }
 
-func (db *DB) CreateEndpoint(ctx context.Context, url string, slackWebhookURL string, email string, allowedEventTypes []string) (*Endpoint, string, error) {
+func (db *DB) CreateEndpoint(ctx context.Context, url string, slackWebhookURL string, email string, allowedEventTypes []string, rateLimitPerSecond int, rateLimitBurst int) (*Endpoint, string, error) {
 	secret := generateSecret()
 	allowedStr := joinAllowedEventTypes(allowedEventTypes)
 	e := &Endpoint{}
 	err := db.Pool.QueryRow(ctx,
-		`INSERT INTO endpoints (url, secret, slack_webhook_url, email, allowed_event_types) VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO endpoints (url, secret, slack_webhook_url, email, allowed_event_types, rate_limit_per_second, rate_limit_burst) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING `+endpointColumns,
-		url, secret, slackWebhookURL, email, allowedStr,
+		url, secret, slackWebhookURL, email, allowedStr, rateLimitPerSecond, rateLimitBurst,
 	).Scan(&e.ID, &e.URL, &e.Secret, &e.SlackWebhookURL, &e.Email, &allowedStr, &e.RateLimitPerSecond, &e.RateLimitBurst, &e.CreatedAt, &e.UpdatedAt)
 	if err != nil {
 		return nil, "", fmt.Errorf("creating endpoint: %w", err)

@@ -3,6 +3,8 @@ package database
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -12,7 +14,18 @@ type DB struct {
 }
 
 func Connect(databaseURL string) (*DB, error) {
-	pool, err := pgxpool.New(context.Background(), databaseURL)
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing pool config: %w", err)
+	}
+
+	if s := os.Getenv("DB_POOL_SIZE"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			config.MaxConns = int32(n)
+		}
+	}
+
+	pool, err := pgxpool.NewWithConfig(context.Background(), config)
 	if err != nil {
 		return nil, fmt.Errorf("creating pool: %w", err)
 	}
